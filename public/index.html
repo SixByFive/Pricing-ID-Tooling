@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pricing-ID Tooling</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #22263a;
+    --border: #2e3349;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --accent: #6366f1;
+    --accent-hover: #818cf8;
+    --danger: #ef4444;
+    --danger-hover: #f87171;
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --log-bg: #0a0c12;
+    --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Header */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+
+  header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
+  header .badge {
+    font-size: 11px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 7px;
+    color: var(--muted);
+    font-family: var(--font-mono);
+  }
+
+  /* Layout */
+  .layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* Sidebar */
+  aside {
+    width: 280px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  .sidebar-section {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar-section label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+
+  input[type="text"] {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 7px 10px;
+    font-size: 13px;
+    font-family: var(--font-mono);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  input[type="text"]:focus { border-color: var(--accent); }
+  input[type="text"]::placeholder { color: var(--muted); }
+
+  .search-wrap { position: relative; }
+  .search-wrap input { padding-left: 28px; }
+  .search-wrap::before {
+    content: '⌕';
+    position: absolute;
+    left: 9px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    font-size: 15px;
+    pointer-events: none;
+  }
+
+  .set-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 0;
+  }
+
+  .set-list::-webkit-scrollbar { width: 4px; }
+  .set-list::-webkit-scrollbar-track { background: transparent; }
+  .set-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .set-item {
+    padding: 7px 16px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--muted);
+    transition: background 0.1s, color 0.1s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .set-item:hover { background: var(--surface2); color: var(--text); }
+  .set-item.active { background: var(--surface2); color: var(--accent); font-weight: 500; }
+
+  .set-item .serie {
+    font-size: 10px;
+    color: var(--muted);
+    display: block;
+    margin-top: 1px;
+  }
+
+  .set-item.active .serie { color: var(--accent); opacity: 0.7; }
+
+  .empty-state {
+    padding: 20px 16px;
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    line-height: 1.6;
+  }
+
+  /* Main */
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .set-label {
+    font-size: 13px;
+    font-family: var(--font-mono);
+    color: var(--text);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .set-label.placeholder { color: var(--muted); font-family: inherit; font-size: 13px; }
+
+  button {
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 7px 14px;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .btn-dry-run {
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .btn-dry-run:hover:not(:disabled) { background: var(--border); }
+
+  .btn-apply {
+    background: var(--danger);
+    color: #fff;
+  }
+
+  .btn-apply:hover:not(:disabled) { background: var(--danger-hover); }
+
+  /* Content area */
+  .content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Log panel */
+  .log-panel {
+    flex: 1;
+    background: var(--log-bg);
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.7;
+    padding: 14px 18px;
+    overflow-y: auto;
+    color: #94a3b8;
+  }
+
+  .log-panel::-webkit-scrollbar { width: 4px; }
+  .log-panel::-webkit-scrollbar-track { background: transparent; }
+  .log-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .log-line { display: block; }
+  .log-line.error { color: var(--danger); }
+  .log-line.success { color: var(--success); }
+  .log-placeholder { color: var(--muted); font-family: inherit; }
+
+  /* Report panel */
+  .report-panel {
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    overflow-y: auto;
+    max-height: 45%;
+    flex-shrink: 0;
+  }
+
+  .report-panel:empty { display: none; }
+  .report-panel::-webkit-scrollbar { width: 4px; }
+  .report-panel::-webkit-scrollbar-track { background: transparent; }
+  .report-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .report-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--muted);
+    position: sticky;
+    top: 0;
+    background: var(--surface);
+    z-index: 1;
+  }
+
+  .summary-chips {
+    display: flex;
+    gap: 8px;
+    padding: 12px 18px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .chip {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 4px 10px;
+    font-size: 12px;
+  }
+
+  .chip .chip-val { font-weight: 700; font-family: var(--font-mono); }
+  .chip.matched .chip-val { color: var(--success); }
+  .chip.ambiguous .chip-val { color: var(--warning); }
+  .chip.unmatched .chip-val { color: var(--danger); }
+  .chip.review .chip-val { color: var(--warning); }
+  .chip.written .chip-val { color: var(--accent); }
+
+  .report-section { padding: 0 18px 16px; }
+
+  .report-section h3 {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--muted);
+    margin: 14px 0 8px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+  }
+
+  th {
+    text-align: left;
+    padding: 5px 10px;
+    background: var(--surface2);
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  td {
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text);
+  }
+
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--surface2); }
+
+  .tag-review {
+    display: inline-block;
+    background: rgba(245,158,11,0.15);
+    border: 1px solid rgba(245,158,11,0.4);
+    color: var(--warning);
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 10px;
+    font-family: inherit;
+    margin-left: 6px;
+  }
+
+  .tag-ok {
+    color: var(--success);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Pricing-ID Tooling</h1>
+  <span class="badge" id="mode-badge">idle</span>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="sidebar-section">
+      <label>Repo path</label>
+      <input type="text" id="repo-input" placeholder="H:/cards-database" spellcheck="false">
+    </div>
+    <div class="sidebar-section">
+      <label>Sets</label>
+      <div class="search-wrap">
+        <input type="text" id="set-search" placeholder="Search sets…" spellcheck="false">
+      </div>
+    </div>
+    <div class="set-list" id="set-list">
+      <div class="empty-state">Enter a repo path<br>to load sets</div>
+    </div>
+  </aside>
+
+  <main>
+    <div class="toolbar">
+      <span class="set-label placeholder" id="selected-label">No set selected</span>
+      <button class="btn-dry-run" id="btn-dry" disabled>▷ Dry run</button>
+      <button class="btn-apply" id="btn-apply" disabled>⚡ Apply</button>
+    </div>
+
+    <div class="content">
+      <div class="log-panel" id="log-panel">
+        <span class="log-placeholder">Select a set and run a dry-run to preview changes.</span>
+      </div>
+      <div class="report-panel" id="report-panel"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+  const repoInput = document.getElementById('repo-input')
+  const setSearch = document.getElementById('set-search')
+  const setList = document.getElementById('set-list')
+  const selectedLabel = document.getElementById('selected-label')
+  const btnDry = document.getElementById('btn-dry')
+  const btnApply = document.getElementById('btn-apply')
+  const logPanel = document.getElementById('log-panel')
+  const reportPanel = document.getElementById('report-panel')
+  const modeBadge = document.getElementById('mode-badge')
+
+  let allSets = []
+  let selectedSet = null
+  let running = false
+
+  // Restore repo from localStorage
+  const savedRepo = localStorage.getItem('repo') ?? ''
+  if (savedRepo) {
+    repoInput.value = savedRepo
+    loadSets(savedRepo)
+  }
+
+  // Repo input — debounced load
+  let repoTimer
+  repoInput.addEventListener('input', () => {
+    clearTimeout(repoTimer)
+    repoTimer = setTimeout(() => {
+      const repo = repoInput.value.trim()
+      localStorage.setItem('repo', repo)
+      loadSets(repo)
+    }, 600)
+  })
+
+  // Set search
+  setSearch.addEventListener('input', () => renderSetList(setSearch.value.trim().toLowerCase()))
+
+  // Buttons
+  btnDry.addEventListener('click', () => run(false))
+  btnApply.addEventListener('click', () => {
+    if (!confirm(`Apply changes to "${selectedSet}"?\n\nThis will rewrite card files. Make sure you have reviewed the dry-run report.`)) return
+    run(true)
+  })
+
+  async function loadSets(repo) {
+    if (!repo) { setList.innerHTML = '<div class="empty-state">Enter a repo path<br>to load sets</div>'; return }
+    setList.innerHTML = '<div class="empty-state">Loading…</div>'
+    try {
+      const res = await fetch(`/api/sets?repo=${encodeURIComponent(repo)}`)
+      const data = await res.json()
+      allSets = data.sets ?? []
+      renderSetList(setSearch.value.trim().toLowerCase())
+    } catch {
+      setList.innerHTML = '<div class="empty-state">Could not load sets.<br>Check repo path.</div>'
+    }
+  }
+
+  function renderSetList(filter) {
+    const filtered = filter ? allSets.filter(s => s.toLowerCase().includes(filter)) : allSets
+    if (!filtered.length) {
+      setList.innerHTML = '<div class="empty-state">No sets found</div>'
+      return
+    }
+    setList.innerHTML = filtered.map(s => {
+      const parts = s.split('/')
+      const name = parts.at(-1)
+      const serie = parts.slice(0, -1).join('/')
+      const active = s === selectedSet ? 'active' : ''
+      return `<div class="set-item ${active}" data-set="${s}"><span>${name}</span><span class="serie">${serie}</span></div>`
+    }).join('')
+    setList.querySelectorAll('.set-item').forEach(el => {
+      el.addEventListener('click', () => selectSet(el.dataset.set))
+    })
+  }
+
+  function selectSet(set) {
+    selectedSet = set
+    selectedLabel.textContent = set
+    selectedLabel.classList.remove('placeholder')
+    btnDry.disabled = running
+    btnApply.disabled = running
+    reportPanel.innerHTML = ''
+    logPanel.innerHTML = '<span class="log-placeholder">Ready. Press Dry run to preview changes.</span>'
+    renderSetList(setSearch.value.trim().toLowerCase())
+
+    // Load last report if available
+    fetch(`/api/report?set=${encodeURIComponent(set)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(report => { if (report) renderReport(report) })
+      .catch(() => {})
+  }
+
+  async function run(apply) {
+    if (!selectedSet || running) return
+    const repo = repoInput.value.trim()
+    if (!repo) return
+
+    running = true
+    btnDry.disabled = true
+    btnApply.disabled = true
+    modeBadge.textContent = apply ? 'applying…' : 'dry-run…'
+    logPanel.innerHTML = ''
+    reportPanel.innerHTML = ''
+
+    const es = new EventSource(`/api/run-get?repo=${encodeURIComponent(repo)}&set=${encodeURIComponent(selectedSet)}&apply=${apply}`)
+
+    // Use fetch + ReadableStream for POST SSE
+    const res = await fetch('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo, set: selectedSet, apply }),
+    })
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n\n')
+      buf = lines.pop() ?? ''
+      for (const chunk of lines) {
+        if (!chunk.startsWith('data: ')) continue
+        try {
+          const msg = JSON.parse(chunk.slice(6))
+          if (msg.type === 'log') appendLog(msg.line)
+          if (msg.type === 'done') renderReport(msg.report)
+          if (msg.type === 'error') appendLog(msg.message, true)
+        } catch {}
+      }
+    }
+
+    running = false
+    btnDry.disabled = false
+    btnApply.disabled = false
+    modeBadge.textContent = 'idle'
+  }
+
+  function appendLog(line, isError = false) {
+    const el = document.createElement('span')
+    el.className = 'log-line' + (isError ? ' error' : '')
+    el.textContent = line
+    logPanel.appendChild(el)
+    logPanel.appendChild(document.createTextNode('\n'))
+    logPanel.scrollTop = logPanel.scrollHeight
+  }
+
+  function renderReport(report) {
+    const s = report.summary
+    const mode = report.mode === 'apply' ? '⚡ Applied' : '▷ Dry run'
+
+    let html = `
+      <div class="report-header">
+        <span>Report</span>
+        <span style="font-weight:400;color:var(--text);text-transform:none;letter-spacing:0">${report.set}</span>
+        <span style="margin-left:auto">${mode} · ${new Date(report.createdAt).toLocaleTimeString()}</span>
+      </div>
+      <div class="summary-chips">
+        <div class="chip matched"><span class="chip-val">${s.matched}</span> matched</div>
+        <div class="chip ambiguous"><span class="chip-val">${s.ambiguous}</span> ambiguous</div>
+        <div class="chip unmatched"><span class="chip-val">${s.unmatched}</span> unmatched</div>
+        <div class="chip review"><span class="chip-val">${s.reviewRequired}</span> review required</div>
+        ${s.written > 0 ? `<div class="chip written"><span class="chip-val">${s.written}</span> written</div>` : ''}
+      </div>
+      <div class="report-section">
+    `
+
+    if (report.matched.length) {
+      html += `<h3>Matched cards</h3>
+      <table><thead><tr><th>Card file</th><th>Match</th><th>Products</th></tr></thead><tbody>`
+      for (const m of report.matched) {
+        const file = m.cardFile.split(/[\\/]/).at(-1)
+        const reviewTag = m.reviewRequired ? '<span class="tag-review">review</span>' : '<span class="tag-ok">✓</span>'
+        const method = m.matchMethod === 'collector-number' ? '#' : 'name'
+        const ids = m.products.map(p => {
+          const parts = [`TCG: ${p.id}`]
+          if (p.cardmarket_id != null) parts.push(`CM: ${p.cardmarket_id}`)
+          if (p.cardtrader_id != null) parts.push(`CT: ${p.cardtrader_id}`)
+          return parts.join(' · ')
+        }).join('<br>')
+        html += `<tr><td>${file}${reviewTag}</td><td>${method}</td><td>${ids}</td></tr>`
+      }
+      html += '</tbody></table>'
+    }
+
+    if (report.ambiguous.length) {
+      html += `<h3>Ambiguous (not written)</h3>
+      <table><thead><tr><th>Card file</th><th>Products</th></tr></thead><tbody>`
+      for (const a of report.ambiguous) {
+        const file = a.cardFile.split(/[\\/]/).at(-1)
+        html += `<tr><td>${file}</td><td>${a.products.map(p => `${p.id} (${p.name})`).join(', ')}</td></tr>`
+      }
+      html += '</tbody></table>'
+    }
+
+    if (report.unmatched.length) {
+      html += `<h3>Unmatched</h3>
+      <table><thead><tr><th>Card file</th><th>Existing TCGPlayer ID</th></tr></thead><tbody>`
+      for (const u of report.unmatched) {
+        const file = u.cardFile.split(/[\\/]/).at(-1)
+        html += `<tr><td>${file}</td><td>${u.existingTcgplayerId ?? '—'}</td></tr>`
+      }
+      html += '</tbody></table>'
+    }
+
+    html += '</div>'
+    reportPanel.innerHTML = html
+    reportPanel.scrollTop = 0
+  }
+</script>
+</body>
+</html>

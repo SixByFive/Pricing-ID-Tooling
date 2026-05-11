@@ -1,0 +1,17 @@
+{
+	"name": "pricing-id-tooling",
+	"private": true,
+	"scripts": {
+		"enrich": "bun src/cli.ts",
+		"enrich:dry-run": "bun src/cli.ts",
+		"enrich:apply": "bun src/cli.ts --apply",
+		"ui": "bun src/server.ts",
+		"validate": "tsc --noEmit"
+	},
+	"devDependencies": {
+		"@types/jscodeshift": "^17.3.0",
+		"@types/node": "^20.0.0",
+		"jscodeshift": "^17.3.0",
+		"typescript": "^5.0.0"
+	}
+}
