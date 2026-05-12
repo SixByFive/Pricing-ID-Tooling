@@ -4,16 +4,23 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Pricing-ID Tooling</title>
+
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  *, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
 
   :root {
     --bg: #0f1117;
     --surface: #1a1d27;
     --surface2: #22263a;
+    --surface3: #2a2f45;
     --border: #2e3349;
     --text: #e2e8f0;
-    --muted: #64748b;
+    --muted: #94a3b8;
+    --muted2: #64748b;
     --accent: #6366f1;
     --accent-hover: #818cf8;
     --danger: #ef4444;
@@ -35,7 +42,6 @@
     overflow: hidden;
   }
 
-  /* Header */
   header {
     display: flex;
     align-items: center;
@@ -46,7 +52,12 @@
     flex-shrink: 0;
   }
 
-  header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
+  header h1 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+
   header .badge {
     font-size: 11px;
     background: var(--surface2);
@@ -57,16 +68,14 @@
     font-family: var(--font-mono);
   }
 
-  /* Layout */
   .layout {
     display: flex;
     flex: 1;
     overflow: hidden;
   }
 
-  /* Sidebar */
   aside {
-    width: 280px;
+    width: 300px;
     flex-shrink: 0;
     border-right: 1px solid var(--border);
     display: flex;
@@ -86,7 +95,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: var(--muted);
+    color: var(--muted2);
     margin-bottom: 8px;
   }
 
@@ -103,18 +112,29 @@
     transition: border-color 0.15s;
   }
 
-  input[type="text"]:focus { border-color: var(--accent); }
-  input[type="text"]::placeholder { color: var(--muted); }
+  input[type="text"]:focus {
+    border-color: var(--accent);
+  }
 
-  .search-wrap { position: relative; }
-  .search-wrap input { padding-left: 28px; }
+  input[type="text"]::placeholder {
+    color: var(--muted2);
+  }
+
+  .search-wrap {
+    position: relative;
+  }
+
+  .search-wrap input {
+    padding-left: 28px;
+  }
+
   .search-wrap::before {
     content: '⌕';
     position: absolute;
     left: 9px;
     top: 50%;
     transform: translateY(-50%);
-    color: var(--muted);
+    color: var(--muted2);
     font-size: 15px;
     pointer-events: none;
   }
@@ -125,12 +145,27 @@
     padding: 6px 0;
   }
 
-  .set-list::-webkit-scrollbar { width: 4px; }
-  .set-list::-webkit-scrollbar-track { background: transparent; }
-  .set-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .set-list::-webkit-scrollbar,
+  .log-panel::-webkit-scrollbar,
+  .report-panel::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .set-list::-webkit-scrollbar-track,
+  .log-panel::-webkit-scrollbar-track,
+  .report-panel::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .set-list::-webkit-scrollbar-thumb,
+  .log-panel::-webkit-scrollbar-thumb,
+  .report-panel::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
 
   .set-item {
-    padding: 7px 16px;
+    padding: 8px 16px;
     cursor: pointer;
     font-size: 13px;
     color: var(--muted);
@@ -140,27 +175,37 @@
     text-overflow: ellipsis;
   }
 
-  .set-item:hover { background: var(--surface2); color: var(--text); }
-  .set-item.active { background: var(--surface2); color: var(--accent); font-weight: 500; }
+  .set-item:hover {
+    background: var(--surface2);
+    color: var(--text);
+  }
+
+  .set-item.active {
+    background: var(--surface2);
+    color: var(--accent);
+    font-weight: 500;
+  }
 
   .set-item .serie {
     font-size: 10px;
-    color: var(--muted);
+    color: var(--muted2);
     display: block;
-    margin-top: 1px;
+    margin-top: 2px;
   }
 
-  .set-item.active .serie { color: var(--accent); opacity: 0.7; }
+  .set-item.active .serie {
+    color: var(--accent);
+    opacity: 0.75;
+  }
 
   .empty-state {
     padding: 20px 16px;
-    color: var(--muted);
+    color: var(--muted2);
     font-size: 13px;
     text-align: center;
     line-height: 1.6;
   }
 
-  /* Main */
   main {
     flex: 1;
     display: flex;
@@ -187,7 +232,10 @@
     white-space: nowrap;
   }
 
-  .set-label.placeholder { color: var(--muted); font-family: inherit; font-size: 13px; }
+  .set-label.placeholder {
+    color: var(--muted2);
+    font-family: inherit;
+  }
 
   button {
     border: none;
@@ -203,7 +251,10 @@
     white-space: nowrap;
   }
 
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
 
   .btn-dry-run {
     background: var(--surface2);
@@ -211,16 +262,19 @@
     border: 1px solid var(--border);
   }
 
-  .btn-dry-run:hover:not(:disabled) { background: var(--border); }
+  .btn-dry-run:hover:not(:disabled) {
+    background: var(--surface3);
+  }
 
   .btn-apply {
     background: var(--danger);
     color: #fff;
   }
 
-  .btn-apply:hover:not(:disabled) { background: var(--danger-hover); }
+  .btn-apply:hover:not(:disabled) {
+    background: var(--danger-hover);
+  }
 
-  /* Content area */
   .content {
     flex: 1;
     display: flex;
@@ -228,9 +282,9 @@
     overflow: hidden;
   }
 
-  /* Log panel */
   .log-panel {
-    flex: 1;
+    height: 26%;
+    min-height: 150px;
     background: var(--log-bg);
     font-family: var(--font-mono);
     font-size: 12.5px;
@@ -238,46 +292,185 @@
     padding: 14px 18px;
     overflow-y: auto;
     color: #94a3b8;
-  }
-
-  .log-panel::-webkit-scrollbar { width: 4px; }
-  .log-panel::-webkit-scrollbar-track { background: transparent; }
-  .log-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-
-  .log-line { display: block; }
-  .log-line.error { color: var(--danger); }
-  .log-line.success { color: var(--success); }
-  .log-placeholder { color: var(--muted); font-family: inherit; }
-
-  /* Report panel */
-  .report-panel {
-    border-top: 1px solid var(--border);
-    background: var(--surface);
-    overflow-y: auto;
-    max-height: 45%;
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
-  .report-panel:empty { display: none; }
-  .report-panel::-webkit-scrollbar { width: 4px; }
-  .report-panel::-webkit-scrollbar-track { background: transparent; }
-  .report-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .log-line {
+    display: block;
+  }
+
+  .log-line.error {
+    color: var(--danger);
+  }
+
+  .log-line.success {
+    color: var(--success);
+  }
+
+  .log-placeholder {
+    color: var(--muted2);
+    font-family: inherit;
+  }
+
+  .report-panel {
+    flex: 1;
+    background: var(--surface);
+    overflow-y: auto;
+  }
+
+  .report-panel:empty {
+    display: none;
+  }
 
   .report-header {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 18px;
+    padding: 12px 18px;
     border-bottom: 1px solid var(--border);
     font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.07em;
-    color: var(--muted);
+    color: var(--muted2);
     position: sticky;
     top: 0;
     background: var(--surface);
-    z-index: 1;
+    z-index: 2;
+  }
+
+  .report-title {
+    font-weight: 400;
+    color: var(--text);
+    text-transform: none;
+    letter-spacing: 0;
+    font-family: var(--font-mono);
+  }
+
+  .report-time {
+    margin-left: auto;
+    font-weight: 400;
+    color: var(--muted);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .mapping-editor {
+    margin-top: 10px;
+    border: 1px solid var(--border);
+    background: rgba(15,17,23,0.55);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .mapping-editor + .product-list {
+    margin-top: 10px;
+  }
+
+  .mapping-editor-header {
+    padding: 8px 10px;
+    background: var(--surface3);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .mapping-row {
+    display: grid;
+    grid-template-columns: 110px 1fr 120px 140px 120px 1fr 96px 96px;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 10px;
+    border-top: 1px solid var(--border);
+  }
+
+  .mapping-row:first-of-type {
+    border-top: none;
+  }
+
+  .mapping-row input,
+  .mapping-row select {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 6px 8px;
+    font-size: 12px;
+    outline: none;
+  }
+
+  .mapping-row input:focus,
+  .mapping-row select:focus {
+    border-color: var(--accent);
+  }
+
+  .mapping-product-id {
+    font-family: var(--font-mono);
+    color: var(--text);
+    font-size: 12px;
+  }
+
+  .mapping-product-meta {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .mapping-product-meta small {
+    display: block;
+    color: var(--muted2);
+    font-family: var(--font-mono);
+    margin-top: 2px;
+  }
+
+  .btn-save-map {
+    background: var(--accent);
+    color: white;
+    justify-content: center;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  .btn-save-map:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  .btn-clear-map {
+    background: var(--surface2);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    justify-content: center;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  .btn-clear-map:hover:not(:disabled) {
+    background: var(--surface3);
+    color: var(--text);
+  }
+
+  .mapping-status {
+    font-size: 11px;
+    color: var(--muted2);
+    margin-top: 6px;
+  }
+
+  .mapping-status.ok {
+    color: var(--success);
+  }
+
+  .mapping-status.error {
+    color: var(--danger);
+  }
+
+  @media (max-width: 1200px) {
+    .mapping-row {
+      grid-template-columns: 1fr;
+    }
   }
 
   .summary-chips {
@@ -297,73 +490,250 @@
     border-radius: 20px;
     padding: 4px 10px;
     font-size: 12px;
+    color: var(--muted);
   }
 
-  .chip .chip-val { font-weight: 700; font-family: var(--font-mono); }
+  .chip .chip-val {
+    font-weight: 700;
+    font-family: var(--font-mono);
+    color: var(--text);
+  }
+
   .chip.matched .chip-val { color: var(--success); }
   .chip.ambiguous .chip-val { color: var(--warning); }
   .chip.unmatched .chip-val { color: var(--danger); }
   .chip.review .chip-val { color: var(--warning); }
   .chip.written .chip-val { color: var(--accent); }
+  .chip.orphan .chip-val { color: var(--muted); }
 
-  .report-section { padding: 0 18px 16px; }
+  .report-section {
+    padding: 0 18px 20px;
+  }
 
   .report-section h3 {
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.07em;
+    color: var(--muted2);
+    margin: 18px 0 10px;
+  }
+
+  details {
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    border-radius: 8px;
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+
+  details[open] {
+    background: #1c2133;
+  }
+
+  summary {
+    cursor: pointer;
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    list-style: none;
+  }
+
+  summary::-webkit-details-marker {
+    display: none;
+  }
+
+  summary::before {
+    content: '▸';
+    color: var(--muted2);
+    transition: transform 0.15s;
+  }
+
+  details[open] summary::before {
+    transform: rotate(90deg);
+  }
+
+  .card-title {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .card-meta {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted2);
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.03);
+    padding: 2px 7px;
+    font-size: 10px;
+    line-height: 1.4;
     color: var(--muted);
-    margin: 14px 0 8px;
+    font-family: var(--font-mono);
+  }
+
+  .tag.ok {
+    color: var(--success);
+    border-color: rgba(34,197,94,0.35);
+    background: rgba(34,197,94,0.08);
+  }
+
+  .tag.review,
+  .tag.warning {
+    color: var(--warning);
+    border-color: rgba(245,158,11,0.35);
+    background: rgba(245,158,11,0.08);
+  }
+
+  .tag.danger {
+    color: var(--danger);
+    border-color: rgba(239,68,68,0.35);
+    background: rgba(239,68,68,0.08);
+  }
+
+  .details-body {
+    padding: 0 12px 12px 34px;
+  }
+
+  .product-list {
+    display: grid;
+    gap: 10px;
+  }
+
+  .product-card {
+    border: 1px solid var(--border);
+    background: rgba(15,17,23,0.55);
+    border-radius: 8px;
+    padding: 10px;
+  }
+
+  .product-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+
+  .product-name {
+    flex: 1;
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.4;
+  }
+
+  .product-number {
+    color: var(--muted2);
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+
+  .id-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+
+  .id-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 7px;
+    font-size: 11px;
+    color: var(--muted);
+    font-family: var(--font-mono);
+  }
+
+  .id-pill strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .variant-line {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+    margin-bottom: 8px;
+  }
+
+  .sku-table-wrap {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: auto;
+    max-height: 280px;
   }
 
   table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 12.5px;
+    font-size: 12px;
   }
 
   th {
     text-align: left;
-    padding: 5px 10px;
-    background: var(--surface2);
+    padding: 6px 8px;
+    background: var(--surface3);
     color: var(--muted);
     font-weight: 600;
-    font-size: 11px;
+    font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
+    position: sticky;
+    top: 0;
+    z-index: 1;
   }
 
   td {
-    padding: 5px 10px;
+    padding: 6px 8px;
     border-bottom: 1px solid var(--border);
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text);
+    vertical-align: top;
   }
 
-  tr:last-child td { border-bottom: none; }
-  tr:hover td { background: var(--surface2); }
+  tr:last-child td {
+    border-bottom: none;
+  }
 
-  .tag-review {
-    display: inline-block;
-    background: rgba(245,158,11,0.15);
-    border: 1px solid rgba(245,158,11,0.4);
+  tr:hover td {
+    background: rgba(255,255,255,0.03);
+  }
+
+  .muted {
+    color: var(--muted2);
+  }
+
+  .small {
+    font-size: 11px;
+  }
+
+  .inline-warning {
     color: var(--warning);
-    border-radius: 3px;
-    padding: 1px 5px;
-    font-size: 10px;
-    font-family: inherit;
-    margin-left: 6px;
-  }
-
-  .tag-ok {
-    color: var(--success);
+    font-size: 12px;
+    margin: 8px 0;
   }
 </style>
 </head>
-<body>
 
+<body>
 <header>
   <h1>Pricing-ID Tooling</h1>
   <span class="badge" id="mode-badge">idle</span>
@@ -375,12 +745,24 @@
       <label>Repo path</label>
       <input type="text" id="repo-input" placeholder="H:/cards-database" spellcheck="false">
     </div>
+
+    <div class="sidebar-section">
+      <label>CardMarket merge JSON</label>
+      <input type="text" id="cardmarket-json-input" placeholder="H:/exports/cardmarket-OBF-merged.json" spellcheck="false">
+    </div>
+
+    <div class="sidebar-section">
+      <label>CardMarket manual map</label>
+      <input type="text" id="cardmarket-map-input" placeholder="Optional - defaults beside merge JSON" spellcheck="false">
+    </div>
+
     <div class="sidebar-section">
       <label>Sets</label>
       <div class="search-wrap">
         <input type="text" id="set-search" placeholder="Search sets…" spellcheck="false">
       </div>
     </div>
+
     <div class="set-list" id="set-list">
       <div class="empty-state">Enter a repo path<br>to load sets</div>
     </div>
@@ -397,6 +779,7 @@
       <div class="log-panel" id="log-panel">
         <span class="log-placeholder">Select a set and run a dry-run to preview changes.</span>
       </div>
+
       <div class="report-panel" id="report-panel"></div>
     </div>
   </main>
@@ -404,6 +787,8 @@
 
 <script>
   const repoInput = document.getElementById('repo-input')
+  const cardmarketJsonInput = document.getElementById('cardmarket-json-input')
+  const cardmarketMapInput = document.getElementById('cardmarket-map-input')
   const setSearch = document.getElementById('set-search')
   const setList = document.getElementById('set-list')
   const selectedLabel = document.getElementById('selected-label')
@@ -416,41 +801,92 @@
   let allSets = []
   let selectedSet = null
   let running = false
+  let currentReportBlocksApply = false
 
-  // Restore repo from localStorage
   const savedRepo = localStorage.getItem('repo') ?? ''
+  const savedCardmarketJson = localStorage.getItem('cardmarketJson') ?? ''
+  const savedCardmarketMap = localStorage.getItem('cardmarketMap') ?? ''
+
   if (savedRepo) {
     repoInput.value = savedRepo
     loadSets(savedRepo)
   }
 
-  // Repo input — debounced load
+  if (savedCardmarketJson) {
+    cardmarketJsonInput.value = savedCardmarketJson
+  }
+
+  if (savedCardmarketMap) {
+    cardmarketMapInput.value = savedCardmarketMap
+  }
+
+  cardmarketJsonInput.addEventListener('input', () => {
+    localStorage.setItem('cardmarketJson', cardmarketJsonInput.value.trim())
+  })
+
+  cardmarketMapInput.addEventListener('input', () => {
+    localStorage.setItem('cardmarketMap', cardmarketMapInput.value.trim())
+  })
+
   let repoTimer
+
   repoInput.addEventListener('input', () => {
     clearTimeout(repoTimer)
+
     repoTimer = setTimeout(() => {
       const repo = repoInput.value.trim()
+
       localStorage.setItem('repo', repo)
+      selectedSet = null
+      currentReportBlocksApply = false
+      selectedLabel.textContent = 'No set selected'
+      selectedLabel.classList.add('placeholder')
+      btnDry.disabled = true
+      btnApply.disabled = true
+      btnApply.title = ''
+      reportPanel.innerHTML = ''
+
       loadSets(repo)
     }, 600)
   })
 
-  // Set search
-  setSearch.addEventListener('input', () => renderSetList(setSearch.value.trim().toLowerCase()))
+  setSearch.addEventListener('input', () => {
+    renderSetList(setSearch.value.trim().toLowerCase())
+  })
 
-  // Buttons
   btnDry.addEventListener('click', () => run(false))
+
   btnApply.addEventListener('click', () => {
-    if (!confirm(`Apply changes to "${selectedSet}"?\n\nThis will rewrite card files. Make sure you have reviewed the dry-run report.`)) return
+    if (!selectedSet) return
+
+    if (currentReportBlocksApply) {
+      alert('Apply is blocked until all required CardMarket mappings are completed.')
+      return
+    }
+
+    const confirmed = confirm(
+      `Apply changes to "${selectedSet}"?\n\n` +
+      'This will rewrite card files. Make sure you have reviewed the dry-run report first.'
+    )
+
+    if (!confirmed) return
+
     run(true)
   })
 
   async function loadSets(repo) {
-    if (!repo) { setList.innerHTML = '<div class="empty-state">Enter a repo path<br>to load sets</div>'; return }
+    if (!repo) {
+      allSets = []
+      setList.innerHTML = '<div class="empty-state">Enter a repo path<br>to load sets</div>'
+      return
+    }
+
     setList.innerHTML = '<div class="empty-state">Loading…</div>'
+
     try {
       const res = await fetch(`/api/sets?repo=${encodeURIComponent(repo)}`)
       const data = await res.json()
+
       allSets = data.sets ?? []
       renderSetList(setSearch.value.trim().toLowerCase())
     } catch {
@@ -459,43 +895,65 @@
   }
 
   function renderSetList(filter) {
-    const filtered = filter ? allSets.filter(s => s.toLowerCase().includes(filter)) : allSets
+    const filtered = filter
+      ? allSets.filter((set) => set.toLowerCase().includes(filter))
+      : allSets
+
     if (!filtered.length) {
       setList.innerHTML = '<div class="empty-state">No sets found</div>'
       return
     }
-    setList.innerHTML = filtered.map(s => {
-      const parts = s.split('/')
+
+    setList.innerHTML = filtered.map((set) => {
+      const parts = set.split('/')
       const name = parts.at(-1)
       const serie = parts.slice(0, -1).join('/')
-      const active = s === selectedSet ? 'active' : ''
-      return `<div class="set-item ${active}" data-set="${s}"><span>${name}</span><span class="serie">${serie}</span></div>`
+      const active = set === selectedSet ? 'active' : ''
+
+      return `
+        <div class="set-item ${active}" data-set="${escapeAttr(set)}">
+          <span>${escapeHtml(name)}</span>
+          <span class="serie">${escapeHtml(serie)}</span>
+        </div>
+      `
     }).join('')
-    setList.querySelectorAll('.set-item').forEach(el => {
+
+    setList.querySelectorAll('.set-item').forEach((el) => {
       el.addEventListener('click', () => selectSet(el.dataset.set))
     })
   }
 
   function selectSet(set) {
     selectedSet = set
+    currentReportBlocksApply = false
     selectedLabel.textContent = set
     selectedLabel.classList.remove('placeholder')
     btnDry.disabled = running
     btnApply.disabled = running
+    btnApply.title = ''
     reportPanel.innerHTML = ''
     logPanel.innerHTML = '<span class="log-placeholder">Ready. Press Dry run to preview changes.</span>'
+
     renderSetList(setSearch.value.trim().toLowerCase())
 
-    // Load last report if available
     fetch(`/api/report?set=${encodeURIComponent(set)}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(report => { if (report) renderReport(report) })
+      .then((res) => res.ok ? res.json() : null)
+      .then((report) => {
+        if (report) renderReport(report)
+      })
       .catch(() => {})
   }
 
   async function run(apply) {
     if (!selectedSet || running) return
+
+    if (apply && currentReportBlocksApply) {
+      alert('Apply is blocked until all required CardMarket mappings are completed.')
+      return
+    }
+
     const repo = repoInput.value.trim()
+
     if (!repo) return
 
     running = true
@@ -505,112 +963,809 @@
     logPanel.innerHTML = ''
     reportPanel.innerHTML = ''
 
-    const es = new EventSource(`/api/run-get?repo=${encodeURIComponent(repo)}&set=${encodeURIComponent(selectedSet)}&apply=${apply}`)
+    try {
+      const res = await fetch('/api/run', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          repo,
+          set: selectedSet,
+          apply,
+          cardmarketJson: cardmarketJsonInput.value.trim() || undefined,
+          cardmarketMap: cardmarketMapInput.value.trim() || undefined,
+        }),
+      })
 
-    // Use fetch + ReadableStream for POST SSE
-    const res = await fetch('/api/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ repo, set: selectedSet, apply }),
-    })
-
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buf = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-      const lines = buf.split('\n\n')
-      buf = lines.pop() ?? ''
-      for (const chunk of lines) {
-        if (!chunk.startsWith('data: ')) continue
-        try {
-          const msg = JSON.parse(chunk.slice(6))
-          if (msg.type === 'log') appendLog(msg.line)
-          if (msg.type === 'done') renderReport(msg.report)
-          if (msg.type === 'error') appendLog(msg.message, true)
-        } catch {}
+      if (!res.body) {
+        appendLog('No response body returned from server.', true)
+        return
       }
-    }
 
-    running = false
-    btnDry.disabled = false
-    btnApply.disabled = false
-    modeBadge.textContent = 'idle'
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+
+        const chunks = buffer.split('\n\n')
+        buffer = chunks.pop() ?? ''
+
+        for (const chunk of chunks) {
+          if (!chunk.startsWith('data: ')) continue
+
+          try {
+            const msg = JSON.parse(chunk.slice(6))
+
+            if (msg.type === 'log') appendLog(msg.line)
+            if (msg.type === 'done') renderReport(msg.report)
+            if (msg.type === 'error') appendLog(msg.message, true)
+          } catch {
+            // Ignore malformed SSE chunks.
+          }
+        }
+      }
+    } catch (error) {
+      appendLog(error instanceof Error ? error.message : String(error), true)
+    } finally {
+      running = false
+      btnDry.disabled = false
+      btnApply.disabled = currentReportBlocksApply
+      modeBadge.textContent = 'idle'
+    }
   }
 
   function appendLog(line, isError = false) {
     const el = document.createElement('span')
+
     el.className = 'log-line' + (isError ? ' error' : '')
     el.textContent = line
+
     logPanel.appendChild(el)
     logPanel.appendChild(document.createTextNode('\n'))
     logPanel.scrollTop = logPanel.scrollHeight
   }
 
   function renderReport(report) {
-    const s = report.summary
+    const summary = report.summary ?? {}
     const mode = report.mode === 'apply' ? '⚡ Applied' : '▷ Dry run'
+
+    const matchedCount = report.matched?.length ?? 0
+    const ambiguousCount = report.ambiguous?.length ?? 0
+    const unmatchedCount = report.unmatched?.length ?? 0
+    const orphanCount = report.orphanProducts?.length ?? 0
+    const skuCount = countReportSkus(report)
+
+    const hasBlockingCardmarketMappings =
+      (summary.cardmarketUnmappedProducts ?? 0) > 0
+
+    currentReportBlocksApply = hasBlockingCardmarketMappings
 
     let html = `
       <div class="report-header">
         <span>Report</span>
-        <span style="font-weight:400;color:var(--text);text-transform:none;letter-spacing:0">${report.set}</span>
-        <span style="margin-left:auto">${mode} · ${new Date(report.createdAt).toLocaleTimeString()}</span>
+        <span class="report-title">${escapeHtml(report.set)}</span>
+        <span class="report-time">${escapeHtml(mode)} · ${escapeHtml(new Date(report.createdAt).toLocaleString())}</span>
       </div>
+
       <div class="summary-chips">
-        <div class="chip matched"><span class="chip-val">${s.matched}</span> matched</div>
-        <div class="chip ambiguous"><span class="chip-val">${s.ambiguous}</span> ambiguous</div>
-        <div class="chip unmatched"><span class="chip-val">${s.unmatched}</span> unmatched</div>
-        <div class="chip review"><span class="chip-val">${s.reviewRequired}</span> review required</div>
-        ${s.written > 0 ? `<div class="chip written"><span class="chip-val">${s.written}</span> written</div>` : ''}
+        <div class="chip matched"><span class="chip-val">${matchedCount}</span> matched</div>
+        <div class="chip ambiguous"><span class="chip-val">${ambiguousCount}</span> ambiguous</div>
+        <div class="chip unmatched"><span class="chip-val">${unmatchedCount}</span> unmatched</div>
+        <div class="chip orphan"><span class="chip-val">${orphanCount}</span> orphan products</div>
+        <div class="chip review"><span class="chip-val">${summary.reviewRequired ?? 0}</span> review required</div>
+        <div class="chip"><span class="chip-val">${skuCount}</span> SKU rows</div>
+
+        ${summary.cardmarketCardsWithReview > 0 ? `
+          <div class="chip"><span class="chip-val">${summary.cardmarketCardsWithReview}</span> CM cards</div>
+          <div class="chip matched"><span class="chip-val">${summary.cardmarketMappedProducts ?? 0}</span> CM mapped</div>
+          <div class="chip review"><span class="chip-val">${summary.cardmarketUnmappedProducts ?? 0}</span> CM unmapped</div>
+        ` : ''}
+
+        ${summary.written > 0 ? `<div class="chip written"><span class="chip-val">${summary.written}</span> written</div>` : ''}
       </div>
+
+      ${hasBlockingCardmarketMappings ? `
+        <div class="summary-chips">
+          <div class="chip unmatched">
+            <span class="chip-val">Blocked</span>
+            Apply is disabled until ${summary.cardmarketUnmappedProducts} required CardMarket mapping${summary.cardmarketUnmappedProducts === 1 ? '' : 's'} are completed.
+          </div>
+        </div>
+      ` : ''}
+
+      ${report.cardmarket ? `
+        <div class="summary-chips">
+          <div class="chip"><span class="chip-val">${escapeHtml(report.cardmarket.mergedKeys)}</span> CM merged keys</div>
+          <div class="chip"><span class="chip-val">${escapeHtml(report.cardmarket.baseOnly)}</span> base only</div>
+          <div class="chip review"><span class="chip-val">${escapeHtml(report.cardmarket.both)}</span> base + additional</div>
+          <div class="chip"><span class="chip-val">${escapeHtml(report.cardmarket.addOnly)}</span> add only</div>
+        </div>
+      ` : ''}
+
       <div class="report-section">
     `
 
-    if (report.matched.length) {
-      html += `<h3>Matched cards</h3>
-      <table><thead><tr><th>Card file</th><th>Match</th><th>Products</th></tr></thead><tbody>`
-      for (const m of report.matched) {
-        const file = m.cardFile.split(/[\\/]/).at(-1)
-        const reviewTag = m.reviewRequired ? '<span class="tag-review">review</span>' : '<span class="tag-ok">✓</span>'
-        const method = m.matchMethod === 'collector-number' ? '#' : 'name'
-        const ids = m.products.map(p => {
-          const parts = [`TCG: ${p.id}`]
-          if (p.cardmarket_id != null) parts.push(`CM: ${p.cardmarket_id}`)
-          if (p.cardtrader_id != null) parts.push(`CT: ${p.cardtrader_id}`)
-          return parts.join(' · ')
-        }).join('<br>')
-        html += `<tr><td>${file}${reviewTag}</td><td>${method}</td><td>${ids}</td></tr>`
+    if (report.matched?.length) {
+      html += `<h3>Matched cards</h3>`
+
+      for (const match of report.matched) {
+        html += renderMatchedCard(match)
       }
-      html += '</tbody></table>'
     }
 
-    if (report.ambiguous.length) {
-      html += `<h3>Ambiguous (not written)</h3>
-      <table><thead><tr><th>Card file</th><th>Products</th></tr></thead><tbody>`
-      for (const a of report.ambiguous) {
-        const file = a.cardFile.split(/[\\/]/).at(-1)
-        html += `<tr><td>${file}</td><td>${a.products.map(p => `${p.id} (${p.name})`).join(', ')}</td></tr>`
+    if (report.ambiguous?.length) {
+      html += `<h3>Ambiguous cards - not written</h3>`
+
+      for (const item of report.ambiguous) {
+        html += renderAmbiguousCard(item)
       }
-      html += '</tbody></table>'
     }
 
-    if (report.unmatched.length) {
-      html += `<h3>Unmatched</h3>
-      <table><thead><tr><th>Card file</th><th>Existing TCGPlayer ID</th></tr></thead><tbody>`
-      for (const u of report.unmatched) {
-        const file = u.cardFile.split(/[\\/]/).at(-1)
-        html += `<tr><td>${file}</td><td>${u.existingTcgplayerId ?? '—'}</td></tr>`
+    if (report.unmatched?.length) {
+      html += `<h3>Unmatched cards</h3>`
+
+      for (const item of report.unmatched) {
+        html += renderUnmatchedCard(item)
       }
-      html += '</tbody></table>'
+    }
+
+    if (report.orphanProducts?.length) {
+      html += `<h3>Orphan products</h3>`
+
+      for (const item of report.orphanProducts) {
+        html += renderOrphanProduct(item)
+      }
     }
 
     html += '</div>'
+
     reportPanel.innerHTML = html
     reportPanel.scrollTop = 0
+
+    btnApply.disabled = running || hasBlockingCardmarketMappings
+
+    if (hasBlockingCardmarketMappings) {
+      btnApply.title = `${summary.cardmarketUnmappedProducts} required CardMarket mappings still need editing before apply.`
+    } else {
+      btnApply.title = ''
+    }
+  }
+
+  function renderMatchedCard(match) {
+    const file = filename(match.cardFile)
+    const productCount = match.products?.length ?? 0
+    const skuCount = countProductsSkus(match.products ?? [])
+    const needsCardmarketMapping = Boolean(match.cardmarketReview?.needsMapping)
+
+    const reviewTag = needsCardmarketMapping
+      ? '<span class="tag danger">needs CM mapping</span>'
+      : match.reviewRequired
+        ? '<span class="tag review">review</span>'
+        : '<span class="tag ok">safe</span>'
+
+    return `
+      <details>
+        <summary>
+          <span class="card-title">${escapeHtml(file)}</span>
+          <span class="card-meta">
+            ${reviewTag}
+            <span class="tag">${escapeHtml(match.matchMethod)}</span>
+            <span class="tag">${productCount} products</span>
+            <span class="tag">${skuCount} SKUs</span>
+            ${match.cardmarketReview ? `
+              <span class="tag ${match.cardmarketReview.needsMapping ? 'danger' : 'ok'}">
+                CM ${match.cardmarketReview.mappedCount}/${match.cardmarketReview.products.length}
+              </span>
+            ` : ''}
+          </span>
+        </summary>
+
+        <div class="details-body">
+          ${renderCardmarketEditor(match.cardmarketReview)}
+
+          <div class="product-list">
+            ${(match.products ?? []).map(renderProduct).join('')}
+          </div>
+        </div>
+      </details>
+    `
+  }
+
+  function renderAmbiguousCard(item) {
+    const file = filename(item.cardFile)
+
+    return `
+      <details>
+        <summary>
+          <span class="card-title">${escapeHtml(file)}</span>
+          <span class="card-meta">
+            <span class="tag warning">ambiguous</span>
+            <span class="tag">${item.products?.length ?? 0} products</span>
+            ${item.cardmarketReview ? `
+              <span class="tag ${item.cardmarketReview.needsMapping ? 'danger' : 'ok'}">
+                CM ${item.cardmarketReview.mappedCount}/${item.cardmarketReview.products.length}
+              </span>
+            ` : ''}
+          </span>
+        </summary>
+
+        <div class="details-body">
+          <p class="inline-warning">
+            Multiple products appear to resolve to the same variation. Review manually before writing.
+          </p>
+
+          ${renderCardmarketEditor(item.cardmarketReview)}
+
+          <div class="product-list">
+            ${(item.products ?? []).map(renderProduct).join('')}
+          </div>
+        </div>
+      </details>
+    `
+  }
+
+  function renderUnmatchedCard(item) {
+    const file = filename(item.cardFile)
+
+    return `
+      <details>
+        <summary>
+          <span class="card-title">${escapeHtml(file)}</span>
+          <span class="card-meta">
+            <span class="tag danger">unmatched</span>
+            <span class="tag">existing: ${escapeHtml(item.existingTcgplayerId ?? '—')}</span>
+            ${item.cardmarketReview ? `
+              <span class="tag ${item.cardmarketReview.needsMapping ? 'danger' : 'ok'}">
+                CM ${item.cardmarketReview.mappedCount}/${item.cardmarketReview.products.length}
+              </span>
+            ` : ''}
+          </span>
+        </summary>
+
+        <div class="details-body">
+          <p class="muted small">No matching TCGTracking product was found for this card file.</p>
+          ${renderCardmarketEditor(item.cardmarketReview)}
+        </div>
+      </details>
+    `
+  }
+
+  function renderOrphanProduct(item) {
+    return `
+      <details>
+        <summary>
+          <span class="card-title">${escapeHtml(item.product?.name ?? 'Unknown product')}</span>
+          <span class="card-meta">
+            <span class="tag warning">orphan</span>
+            <span class="tag">TCG ${escapeHtml(item.product?.id ?? '—')}</span>
+          </span>
+        </summary>
+
+        <div class="details-body">
+          ${renderProduct(item.product)}
+        </div>
+      </details>
+    `
+  }
+
+  function renderProduct(product) {
+    if (!product) return ''
+
+    const skus = normaliseSkus(product.skus)
+    const cardTraderFinishes = getCardTraderFinishes(product)
+    const detectedVariants = detectProductVariants(product, skus, cardTraderFinishes)
+
+    return `
+      <div class="product-card">
+        <div class="product-head">
+          <div>
+            <div class="product-name">${escapeHtml(product.name ?? 'Unnamed product')}</div>
+            <div class="product-number">
+              #${escapeHtml(product.number ?? '—')}
+              ${product.rarity ? ` · ${escapeHtml(product.rarity)}` : ''}
+            </div>
+          </div>
+        </div>
+
+        <div class="id-grid">
+          <span class="id-pill"><strong>TCGPlayer</strong> ${escapeHtml(product.id ?? '—')}</span>
+          <span class="id-pill"><strong>CardMarket</strong> ${escapeHtml(product.cardmarket_id ?? '—')}</span>
+          <span class="id-pill"><strong>CardTrader</strong> ${escapeHtml(product.cardtrader_id ?? '—')}</span>
+        </div>
+
+        <div class="variant-line">
+          <strong>Detected variation text:</strong>
+          ${detectedVariants.length ? detectedVariants.map((v) => `<span class="tag">${escapeHtml(v)}</span>`).join(' ') : '<span class="muted">none</span>'}
+        </div>
+
+        <div class="variant-line">
+          <strong>CardTrader finishes:</strong>
+          ${cardTraderFinishes.length ? cardTraderFinishes.map((v) => `<span class="tag">${escapeHtml(v)}</span>`).join(' ') : '<span class="muted">none</span>'}
+        </div>
+
+        ${skus.length ? renderSkuTable(skus) : '<p class="muted small">No SKU variation rows attached to this product.</p>'}
+      </div>
+    `
+  }
+
+  function renderSkuTable(skus) {
+    return `
+      <div class="sku-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>SKU ID</th>
+              <th>Variation</th>
+              <th>Condition</th>
+              <th>Language</th>
+              <th>Market</th>
+              <th>Low</th>
+              <th>High</th>
+              <th>Count</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${skus.map(([skuId, sku]) => `
+              <tr>
+                <td>${escapeHtml(skuId)}</td>
+                <td>${escapeHtml(getSkuVariationText(sku) || '—')}</td>
+                <td>${escapeHtml(getSkuCondition(sku) || '—')}</td>
+                <td>${escapeHtml(getSkuLanguage(sku) || '—')}</td>
+                <td>${escapeHtml(getSkuPrice(sku, ['mkt', 'market', 'marketPrice']) ?? '—')}</td>
+                <td>${escapeHtml(getSkuPrice(sku, ['low', 'lowPrice']) ?? '—')}</td>
+                <td>${escapeHtml(getSkuPrice(sku, ['hi', 'high', 'highPrice']) ?? '—')}</td>
+                <td>${escapeHtml(sku.cnt ?? sku.count ?? '—')}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `
+  }
+
+  function renderCardmarketEditor(review) {
+    if (!review || !review.products?.length) {
+      return ''
+    }
+
+    const rows = review.products.map((product) => {
+      const mapping = product.mapping ?? {}
+      const type = mapping.type ?? ''
+      const foil = mapping.foil ?? ''
+      const size = mapping.size ?? ''
+      const stamps = Array.isArray(mapping.stamp) ? mapping.stamp.join(', ') : ''
+      const variantKey = product.variantKey ?? ''
+
+      return `
+        <div class="mapping-row" data-card-id="${escapeAttr(review.cardId)}" data-product-id="${escapeAttr(product.productId)}" data-mapped="${variantKey ? 'true' : 'false'}">
+          <div>
+            <div class="mapping-product-id">${escapeHtml(product.productId)}</div>
+            <span class="tag ${product.bucket === 'additional' ? 'warning' : ''}">${escapeHtml(product.bucket)}</span>
+          </div>
+
+          <div class="mapping-product-meta">
+            ${escapeHtml(product.name)}
+            ${product.variantLabel ? `<small>${escapeHtml(product.variantLabel)}</small>` : '<small>No variant label</small>'}
+            ${variantKey ? `<small data-mapped-line>Mapped: ${escapeHtml(variantKey)}</small>` : '<small data-mapped-line>Not mapped</small>'}
+          </div>
+
+          <select class="cm-type">
+            ${renderTypeOptions(type)}
+          </select>
+
+          <select class="cm-foil">
+            ${renderFoilOptions(foil)}
+          </select>
+
+          <select class="cm-size">
+            ${renderSizeOptions(size)}
+          </select>
+
+          <input
+            class="cm-stamps"
+            type="text"
+            value="${escapeAttr(stamps)}"
+            placeholder="stamp-one, stamp-two"
+            spellcheck="false"
+          >
+
+          <button class="btn-save-map" type="button" onclick="saveCardmarketMapping(this)">
+            Save
+          </button>
+
+          <button class="btn-clear-map" type="button" onclick="clearCardmarketMapping(this)">
+            Clear
+          </button>
+
+          <div class="mapping-status" data-status></div>
+        </div>
+      `
+    }).join('')
+
+    return `
+      <div class="mapping-editor">
+        <div class="mapping-editor-header">
+          CardMarket variant mapping · ${escapeHtml(review.cardId)}
+          · ${review.mappedCount} mapped / ${review.unmappedCount} unmapped
+        </div>
+        ${rows}
+      </div>
+    `
+  }
+
+  function renderTypeOptions(selected) {
+    const options = [
+      ['', 'Select type'],
+      ['normal', 'Normal'],
+      ['holo', 'Holo'],
+      ['reverse', 'Reverse'],
+      ['metal', 'Metal'],
+      ['lenticular', 'Lenticular'],
+    ]
+
+    return options.map(([value, label]) => {
+      return `<option value="${escapeAttr(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(label)}</option>`
+    }).join('')
+  }
+
+  function renderFoilOptions(selected) {
+    const options = [
+      ['', 'No foil'],
+      ['cosmos', 'Cosmos'],
+      ['galaxy', 'Galaxy'],
+      ['cracked-ice', 'Cracked Ice'],
+      ['starlight', 'Starlight'],
+      ['energy', 'Energy'],
+      ['mirror', 'Mirror'],
+      ['league', 'League'],
+      ['player-reward', 'Player Reward'],
+      ['professor-program', 'Professor Program'],
+      ['tinsel', 'Tinsel'],
+      ['gold', 'Gold'],
+      ['pokeball', 'Poké Ball'],
+      ['greatball', 'Great Ball'],
+      ['ultraball', 'Ultra Ball'],
+      ['masterball', 'Master Ball'],
+      ['loveball', 'Love Ball'],
+      ['friendball', 'Friend Ball'],
+      ['quickball', 'Quick Ball'],
+      ['duskball', 'Dusk Ball'],
+      ['team-rocket', 'Team Rocket'],
+    ]
+
+    return options.map(([value, label]) => {
+      return `<option value="${escapeAttr(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(label)}</option>`
+    }).join('')
+  }
+
+  function renderSizeOptions(selected) {
+    const options = [
+      ['', 'Standard'],
+      ['jumbo', 'Jumbo'],
+    ]
+
+    return options.map(([value, label]) => {
+      return `<option value="${escapeAttr(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(label)}</option>`
+    }).join('')
+  }
+
+  async function saveCardmarketMapping(button) {
+    const row = button.closest('.mapping-row')
+    const status = row.querySelector('[data-status]')
+
+    const cardmarketJson = cardmarketJsonInput.value.trim()
+    const cardmarketMap = cardmarketMapInput.value.trim()
+    const cardId = row.dataset.cardId
+    const productId = Number(row.dataset.productId)
+    const type = row.querySelector('.cm-type').value
+    const foil = row.querySelector('.cm-foil').value
+    const size = row.querySelector('.cm-size').value
+    const stampsRaw = row.querySelector('.cm-stamps').value
+
+    if (!cardmarketJson) {
+      setMappingStatus(status, 'CardMarket JSON path is required.', true)
+      return
+    }
+
+    if (!type) {
+      setMappingStatus(status, 'Select a variant type first.', true)
+      return
+    }
+
+    const stamp = stampsRaw
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+
+    const variant = {
+      type,
+      ...(foil ? { foil } : {}),
+      ...(size ? { size } : {}),
+      ...(stamp.length ? { stamp } : {}),
+    }
+
+    button.disabled = true
+    setMappingStatus(status, 'Saving…')
+
+    try {
+      const res = await fetch('/api/cardmarket-map', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          cardmarketJson,
+          cardmarketMap: cardmarketMap || undefined,
+          cardId,
+          productId,
+          variant,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.error ?? data.message ?? 'Failed to save mapping')
+      }
+
+      if (data.mappingPath && !cardmarketMapInput.value.trim()) {
+        cardmarketMapInput.value = data.mappingPath
+        localStorage.setItem('cardmarketMap', data.mappingPath)
+      }
+
+      setMappingStatus(status, 'Saved. Run dry-run to refresh counts.', false)
+      updateMappingRowAfterSave(row, variant)
+    } catch (error) {
+      setMappingStatus(status, error instanceof Error ? error.message : String(error), true)
+    } finally {
+      button.disabled = false
+    }
+  }
+
+  async function clearCardmarketMapping(button) {
+    const row = button.closest('.mapping-row')
+    const status = row.querySelector('[data-status]')
+
+    const cardmarketJson = cardmarketJsonInput.value.trim()
+    const cardmarketMap = cardmarketMapInput.value.trim()
+    const cardId = row.dataset.cardId
+    const productId = Number(row.dataset.productId)
+
+    if (!cardmarketJson) {
+      setMappingStatus(status, 'CardMarket JSON path is required.', true)
+      return
+    }
+
+    button.disabled = true
+    setMappingStatus(status, 'Clearing…')
+
+    try {
+      const res = await fetch('/api/cardmarket-map', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          cardmarketJson,
+          cardmarketMap: cardmarketMap || undefined,
+          cardId,
+          productId,
+          variant: null,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.error ?? data.message ?? 'Failed to clear mapping')
+      }
+
+      row.querySelector('.cm-type').value = ''
+      row.querySelector('.cm-foil').value = ''
+      row.querySelector('.cm-size').value = ''
+      row.querySelector('.cm-stamps').value = ''
+
+      setMappingStatus(status, 'Cleared. Run dry-run to refresh counts.', false)
+      updateMappingRowAfterClear(row)
+    } catch (error) {
+      setMappingStatus(status, error instanceof Error ? error.message : String(error), true)
+    } finally {
+      button.disabled = false
+    }
+  }
+
+  function updateMappingRowAfterSave(row, variant) {
+    const mappedLine = row.querySelector('[data-mapped-line]')
+
+    if (mappedLine) {
+      mappedLine.textContent = `Mapped: ${buildClientVariantKey(variant)}`
+    }
+
+    row.dataset.mapped = 'true'
+  }
+
+  function updateMappingRowAfterClear(row) {
+    const mappedLine = row.querySelector('[data-mapped-line]')
+
+    if (mappedLine) {
+      mappedLine.textContent = 'Not mapped'
+    }
+
+    row.dataset.mapped = 'false'
+  }
+
+  function buildClientVariantKey(variant) {
+    const parts = [`type:${variant.type}`]
+
+    if (variant.foil) {
+      parts.push(`foil:${variant.foil}`)
+    }
+
+    if (variant.size && variant.size !== 'standard') {
+      parts.push(`size:${variant.size}`)
+    }
+
+    if (Array.isArray(variant.stamp) && variant.stamp.length > 0) {
+      parts.push(`stamp:${variant.stamp.slice().sort().join('+')}`)
+    }
+
+    return parts.join('|')
+  }
+
+  function setMappingStatus(el, message, isError = false) {
+    if (!el) return
+
+    el.textContent = message
+    el.className = `mapping-status ${isError ? 'error' : 'ok'}`
+  }
+
+  function normaliseSkus(skus) {
+    if (!skus || typeof skus !== 'object') return []
+
+    return Object.entries(skus).sort(([a], [b]) => {
+      return String(a).localeCompare(String(b), undefined, { numeric: true })
+    })
+  }
+
+  function getCardTraderFinishes(product) {
+    const finishes = new Set()
+
+    for (const entry of product.cardtrader ?? []) {
+      for (const finish of entry.finishes ?? []) {
+        if (finish) finishes.add(String(finish))
+      }
+    }
+
+    return Array.from(finishes).sort()
+  }
+
+  function detectProductVariants(product, skus, cardTraderFinishes) {
+    const values = new Set()
+
+    for (const [, sku] of skus) {
+      const variation = getSkuVariationText(sku)
+
+      if (variation) values.add(variation)
+    }
+
+    for (const finish of cardTraderFinishes) {
+      values.add(finish)
+    }
+
+    const productName = product.name ?? ''
+    const cleanName = product.clean_name ?? ''
+    const nameVariant = detectVariantFromText(`${productName} ${cleanName}`)
+
+    if (nameVariant) values.add(nameVariant)
+
+    return Array.from(values).sort()
+  }
+
+  function getSkuVariationText(sku) {
+    return firstString([
+      sku.var,
+      sku.variant,
+      sku.printing,
+      sku.type,
+      sku.finish,
+      sku.subtype,
+      sku.name,
+    ])
+  }
+
+  function getSkuCondition(sku) {
+    return firstString([
+      sku.cnd,
+      sku.condition,
+      sku.conditionName,
+    ])
+  }
+
+  function getSkuLanguage(sku) {
+    return firstString([
+      sku.lng,
+      sku.language,
+      sku.languageName,
+    ])
+  }
+
+  function getSkuPrice(sku, keys) {
+    for (const key of keys) {
+      const value = sku[key]
+
+      if (typeof value === 'number') {
+        return value.toFixed(2)
+      }
+
+      if (typeof value === 'string' && value.trim()) {
+        return value
+      }
+    }
+
+    return null
+  }
+
+  function firstString(values) {
+    for (const value of values) {
+      if (typeof value === 'string' && value.trim()) {
+        return value.trim()
+      }
+    }
+
+    return ''
+  }
+
+  function detectVariantFromText(value) {
+    const text = String(value).toLowerCase()
+
+    if (text.includes('master ball') || text.includes('masterball')) return 'Master Ball'
+    if (text.includes('poke ball') || text.includes('pokeball') || text.includes('poké ball')) return 'Poké Ball'
+    if (text.includes('cosmos')) return 'Cosmos Holo'
+    if (text.includes('reverse holo') || text.includes('reverse foil') || text.includes('reverse')) return 'Reverse Holo'
+    if (text.includes('holofoil') || text.includes('holo foil') || text.includes('holo')) return 'Holo'
+    if (text.includes('normal')) return 'Normal'
+
+    return ''
+  }
+
+  function countReportSkus(report) {
+    const products = [
+      ...(report.matched ?? []).flatMap((item) => item.products ?? []),
+      ...(report.ambiguous ?? []).flatMap((item) => item.products ?? []),
+      ...(report.orphanProducts ?? []).map((item) => item.product).filter(Boolean),
+    ]
+
+    return countProductsSkus(products)
+  }
+
+  function countProductsSkus(products) {
+    return products.reduce((total, product) => {
+      return total + normaliseSkus(product.skus).length
+    }, 0)
+  }
+
+  function filename(filePath) {
+    return String(filePath ?? '').split(/[\\/]/).at(-1) ?? String(filePath ?? '')
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;')
+  }
+
+  function escapeAttr(value) {
+    return escapeHtml(value).replaceAll('`', '&#096;')
   }
 </script>
 </body>
