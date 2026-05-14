@@ -25,13 +25,9 @@ export interface BuildVariantsOptions {
 	/**
 	 * Optional CardMarket review data attached during enrichment.
 	 *
-	 * When supplied, this lets the writer use the manual CardMarket mappings:
-	 *
-	 * type:normal              -> cardmarket base ID
-	 * type:holo                -> cardmarket base ID for holo-only cards
-	 * type:holo|foil:cosmos    -> cardmarket additional ID
-	 * type:holo|stamp:...      -> cardmarket additional ID
-	 * type:holo|size:jumbo     -> cardmarket additional ID
+	 * When supplied, the writer uses manual CardMarket mappings as the sole
+	 * source of truth for cardmarket IDs. product.cardmarket_id is never used
+	 * as a fallback when this is present.
 	 */
 	cardmarketReview?: CardmarketCardReview
 }
@@ -39,7 +35,7 @@ export interface BuildVariantsOptions {
 /**
  * Returns new source with the `variants` property updated.
  *
- * It also removes top-level `thirdParty` when variants become detailed,
+ * Also removes top-level `thirdParty` when variants become detailed,
  * because the IDs now belong inside each variant.
  */
 export function buildVariants(
@@ -91,6 +87,99 @@ export function buildVariants(
 	nextSource = removeTopLevelThirdParty(nextSource)
 
 	return nextSource === source ? source : nextSource
+}
+
+/**
+ * Safe fill mode: adds missing `cardtrader` IDs to existing detailed variants.
+ *
+ * Rules:
+ * - Only operates on detailed (array) variants — never converts simple shape
+ * - Only adds `cardtrader` where it is missing and a matched product has it
+ * - Never creates new variants
+ * - Never removes top-level thirdParty
+ * - Never overwrites existing cardmarket, tcgplayer, or cardtrader
+ */
+export function fillMissingCardtraderIds(
+	source: string,
+	products: TCGTrackingProduct[],
+): string {
+	const variantsRange = findPropRange(source, 'variants')
+
+	if (!variantsRange) {
+		return source
+	}
+
+	const propText = source.slice(variantsRange.start, variantsRange.end)
+	const isDetailed = /^variants\s*:\s*\[/.test(propText)
+
+	if (!isDetailed) {
+		return source
+	}
+
+	const variants = parseVariantsArray(propText)
+	const productsByVariantKey = buildProductVariantMap(products)
+	const baseIndent = lineIndent(source, variantsRange.start)
+
+	const i1 = baseIndent + '\t'
+	const i2 = i1 + '\t'
+	const i3 = i2 + '\t'
+
+	let anyChanged = false
+
+	const elements = variants.map((variant) => {
+		const existingIdentity = resolveExistingVariant({
+			type: getStringField(variant, 'type') as CardVariantDetailed['type'],
+			foil: getStringField(variant, 'foil'),
+			stamp: getArrayField(variant, 'stamp'),
+			size: getStringField(variant, 'size'),
+		})
+
+		const key = existingIdentity ? variantKey(existingIdentity) : null
+
+		const product =
+			key !== null
+				? productsByVariantKey.get(key)
+				: products.length === 1 && variants.length === 1
+					? products[0]
+					: undefined
+
+		const existingCardtrader = variant.thirdParty.cardtrader
+		const newCardtrader =
+			typeof existingCardtrader !== 'number' && typeof product?.cardtrader_id === 'number'
+				? product.cardtrader_id
+				: undefined
+
+		if (typeof newCardtrader === 'number') {
+			anyChanged = true
+		}
+
+		const tp =
+			typeof newCardtrader === 'number'
+				? { ...variant.thirdParty, cardtrader: newCardtrader }
+				: variant.thirdParty
+
+		const lines: string[] = variant.fields.map((field) => {
+			return `${i2}${field.name}: ${field.rawValue}`
+		})
+
+		if (Object.keys(tp).length > 0) {
+			const tpFields = orderedThirdPartyEntries(tp).map(([k, v]) => {
+				return `${i3}${k}: ${v}`
+			})
+
+			lines.push(`${i2}thirdParty: {\n${tpFields.join(',\n')}\n${i2}}`)
+		}
+
+		return `${i1}{\n${lines.join(',\n')}\n${i1}}`
+	})
+
+	if (!anyChanged) {
+		return source
+	}
+
+	const newPropText = `variants: [\n${elements.join(',\n')},\n${baseIndent}],`
+
+	return source.slice(0, variantsRange.start) + newPropText + source.slice(variantsRange.end)
 }
 
 // ---------------------------------------------------------------------------
@@ -300,7 +389,9 @@ function removeTopLevelThirdParty(source: string): string {
 // ---------------------------------------------------------------------------
 
 function parseVariantsArray(propText: string): ParsedVariant[] {
-	const arrayText = propText.replace(/^variants\s*:\s*/, '')
+	// Strip trailing comma that findPropRange includes in its range —
+	// "const __v = [...],  " is invalid syntax and will throw Unexpected token.
+	const arrayText = propText.replace(/^variants\s*:\s*/, '').trimEnd().replace(/,$/, '')
 	const wrapper = `const __v = ${arrayText}`
 	const root = j(wrapper)
 
@@ -401,10 +492,14 @@ function renderVariantsBlock(
 	cardmarketReview?: CardmarketCardReview,
 ): string {
 	const productsByVariantKey = buildProductVariantMap(products)
+	const hasCardmarketReview = Boolean(cardmarketReview)
 
 	const i1 = baseIndent + '\t'
 	const i2 = i1 + '\t'
 	const i3 = i2 + '\t'
+
+	// Track existing variant keys so we don't duplicate when appending new ones.
+	const existingKeys = new Set<string>()
 
 	const elements = variants.map((variant) => {
 		const existingIdentity = resolveExistingVariant({
@@ -415,6 +510,10 @@ function renderVariantsBlock(
 		})
 
 		const key = existingIdentity ? variantKey(existingIdentity) : null
+
+		if (key) {
+			existingKeys.add(key)
+		}
 
 		const product =
 			key !== null
@@ -428,14 +527,19 @@ function renderVariantsBlock(
 				? getCardmarketIdForVariantKey(cardmarketReview, key)
 				: undefined
 
-		const merged = mergeThirdParty(variant.thirdParty, product, cardmarketId)
+		const merged = mergeThirdParty(
+			variant.thirdParty,
+			product,
+			cardmarketId,
+			hasCardmarketReview,
+		)
 
 		const lines: string[] = variant.fields.map((field) => {
 			return `${i2}${field.name}: ${field.rawValue}`
 		})
 
 		if (Object.keys(merged).length > 0) {
-			const tpFields = Object.entries(merged).map(([k, v]) => {
+			const tpFields = orderedThirdPartyEntries(merged).map(([k, v]) => {
 				return `${i3}${k}: ${v}`
 			})
 
@@ -445,6 +549,47 @@ function renderVariantsBlock(
 		return `${i1}{\n${lines.join(',\n')}\n${i1}}`
 	})
 
+	/**
+	 * Append new special variants from manual CardMarket mappings that have no
+	 * existing counterpart in the file.
+	 *
+	 * Plain variants (type only) are merge-only — they must not create new entries.
+	 * Special variants (foil / stamp / size) create a new entry when missing.
+	 */
+	const newManualMatches = buildManualCardmarketMatches(cardmarketReview).filter(
+		(m) => !m.mergeOnly && !existingKeys.has(m.key),
+	)
+
+	for (const match of newManualMatches.sort(
+		(a, b) => variantSortValue(a.identity) - variantSortValue(b.identity),
+	)) {
+		const lines: string[] = []
+
+		lines.push(`${i2}type: '${match.identity.type}'`)
+
+		if (match.identity.foil) {
+			lines.push(`${i2}foil: '${match.identity.foil}'`)
+		}
+
+		if (match.identity.size) {
+			lines.push(`${i2}size: '${match.identity.size}'`)
+		}
+
+		if (match.identity.stamp && match.identity.stamp.length > 0) {
+			const stamps = match.identity.stamp.map((s) => `'${s}'`).join(', ')
+			lines.push(`${i2}stamp: [${stamps}]`)
+		}
+
+		const product = productsByVariantKey.get(match.key)
+		const tp = buildThirdPartyFields(product, i3, match.cardmarketId, hasCardmarketReview)
+
+		if (tp.length > 0) {
+			lines.push(`${i2}thirdParty: {\n${tp.join(',\n')}\n${i2}}`)
+		}
+
+		elements.push(`${i1}{\n${lines.join(',\n')}\n${i1}}`)
+	}
+
 	return `variants: [\n${elements.join(',\n')},\n${baseIndent}],`
 }
 
@@ -453,6 +598,8 @@ function buildFreshVariantsBlock(
 	baseIndent: string,
 	cardmarketReview?: CardmarketCardReview,
 ): string {
+	const hasCardmarketReview = Boolean(cardmarketReview)
+
 	const i1 = baseIndent + '\t'
 	const i2 = i1 + '\t'
 	const i3 = i2 + '\t'
@@ -481,6 +628,7 @@ function buildFreshVariantsBlock(
 			match.product,
 			i3,
 			match.cardmarketId,
+			hasCardmarketReview,
 		)
 
 		if (tp.length > 0) {
@@ -527,7 +675,20 @@ function buildMergedVariantMatches(
 			continue
 		}
 
-		byKey.set(manualMatch.key, manualMatch)
+		/**
+		 * Plain variants (type only, no foil/stamp/size) must only merge into
+		 * an already-generated variant. They must not create a standalone entry.
+		 *
+		 * Special variants (has foil, stamp, or size) may create a new entry.
+		 */
+		if (!manualMatch.mergeOnly) {
+			byKey.set(manualMatch.key, {
+				key: manualMatch.key,
+				identity: manualMatch.identity,
+				product: undefined,
+				cardmarketId: manualMatch.cardmarketId,
+			})
+		}
 	}
 
 	return Array.from(byKey.values()).sort((a, b) => {
@@ -555,12 +716,17 @@ function mergeThirdParty(
 	existing: Record<string, number>,
 	product?: TCGTrackingProduct,
 	cardmarketId?: number,
+	/**
+	 * When true, product.cardmarket_id is never used as a fallback.
+	 * Manual CardMarket mappings are the sole source of truth.
+	 */
+	hasCardmarketReview = false,
 ): Record<string, number> {
 	const merged = { ...existing }
 
 	if (typeof cardmarketId === 'number') {
 		merged.cardmarket = cardmarketId
-	} else if (typeof product?.cardmarket_id === 'number') {
+	} else if (!hasCardmarketReview && typeof product?.cardmarket_id === 'number') {
 		merged.cardmarket ??= product.cardmarket_id
 	}
 
@@ -579,55 +745,65 @@ function buildThirdPartyFields(
 	product: TCGTrackingProduct | undefined,
 	indent: string,
 	cardmarketId?: number,
+	/**
+	 * When true, product.cardmarket_id is never used as a fallback.
+	 */
+	hasCardmarketReview = false,
 ): string[] {
-	const lines: string[] = []
+	const tp: Record<string, number> = {}
 
 	if (typeof cardmarketId === 'number') {
-		lines.push(`${indent}cardmarket: ${cardmarketId}`)
-	} else if (typeof product?.cardmarket_id === 'number') {
-		lines.push(`${indent}cardmarket: ${product.cardmarket_id}`)
+		tp.cardmarket = cardmarketId
+	} else if (!hasCardmarketReview && typeof product?.cardmarket_id === 'number') {
+		tp.cardmarket = product.cardmarket_id
 	}
 
 	if (product) {
-		lines.push(`${indent}tcgplayer: ${product.id}`)
+		tp.tcgplayer = product.id
 
 		if (typeof product.cardtrader_id === 'number') {
-			lines.push(`${indent}cardtrader: ${product.cardtrader_id}`)
+			tp.cardtrader = product.cardtrader_id
 		}
 	}
 
-	return lines
+	return orderedThirdPartyEntries(tp).map(([k, v]) => `${indent}${k}: ${v}`)
 }
 
 // ---------------------------------------------------------------------------
 // CardMarket manual mapping helpers
 // ---------------------------------------------------------------------------
 
+interface ManualCardmarketMatch extends MergedVariantMatch {
+	/**
+	 * When true this mapping can only merge into an existing generated variant.
+	 * It must not create a new standalone variant entry.
+	 *
+	 * Plain mappings (type only, no foil/stamp/size) are merge-only because
+	 * they represent common finishes that are always generated from TCGTracking
+	 * SKU data. Creating a duplicate plain entry would produce two variants of
+	 * the same type in the output.
+	 */
+	mergeOnly: boolean
+}
+
 function buildManualCardmarketMatches(
 	cardmarketReview?: CardmarketCardReview,
-): MergedVariantMatch[] {
+): ManualCardmarketMatch[] {
 	if (!cardmarketReview) {
 		return []
 	}
 
-	const matches: MergedVariantMatch[] = []
+	const matches: ManualCardmarketMatch[] = []
 
 	for (const product of cardmarketReview.products) {
 		if (!product.mapping) {
 			continue
 		}
 
-		/**
-		 * Important:
-		 * Base CardMarket rows should only merge into existing/generated variants.
-		 * They should NOT create new standalone variants.
-		 *
-		 * Additional rows are different: they represent extra real variants like
-		 * cosmos holo, stamped holo, jumbo, etc., so they may create a new variant.
-		 */
-		if (product.bucket !== 'additional') {
-			continue
-		}
+		const isPlain =
+			!product.mapping.foil &&
+			!product.mapping.size &&
+			(!product.mapping.stamp || product.mapping.stamp.length === 0)
 
 		const identity: VariantIdentity = {
 			type: product.mapping.type,
@@ -640,6 +816,7 @@ function buildManualCardmarketMatches(
 			key: variantKey(identity),
 			identity,
 			cardmarketId: product.productId,
+			mergeOnly: isPlain,
 		})
 	}
 
@@ -671,7 +848,49 @@ function getCardmarketIdForVariantKey(
 		}
 	}
 
+	/**
+	 * Plain variants (type only, no foil/stamp/size) share the base CardMarket
+	 * product listing. On CardMarket, normal and reverse holos are the same
+	 * product — just different conditions within it.
+	 *
+	 * If a plain variant has no explicit mapping, fall back to the base product ID.
+	 */
+	if (isPlainVariantKey(key)) {
+		return getBaseCardmarketId(cardmarketReview)
+	}
+
 	return undefined
+}
+
+/**
+ * Returns true if the key represents a plain variant — type only, no foil/stamp/size.
+ */
+function isPlainVariantKey(key: string): boolean {
+	return /^type:[^|]+$/.test(key)
+}
+
+/**
+ * Returns the CardMarket product ID for the base (auto-mapped) product, if any.
+ */
+function getBaseCardmarketId(cardmarketReview: CardmarketCardReview): number | undefined {
+	return cardmarketReview.products.find((p) => p.bucket === 'base')?.productId
+}
+
+// ---------------------------------------------------------------------------
+// thirdParty ordering
+// ---------------------------------------------------------------------------
+
+const TP_CANONICAL_ORDER = ['cardmarket', 'tcgplayer', 'cardtrader']
+
+function orderedThirdPartyEntries(
+	tp: Record<string, number>,
+): Array<[string, number]> {
+	return (Object.entries(tp) as Array<[string, number]>).sort(([a], [b]) => {
+		const ai = TP_CANONICAL_ORDER.indexOf(a)
+		const bi = TP_CANONICAL_ORDER.indexOf(b)
+
+		return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
+	})
 }
 
 // ---------------------------------------------------------------------------

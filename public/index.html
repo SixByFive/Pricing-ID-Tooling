@@ -275,6 +275,29 @@
     background: var(--danger-hover);
   }
 
+  .btn-fill {
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .btn-fill:hover:not(:disabled) {
+    background: var(--surface3);
+  }
+
+  .stale-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(245,158,11,0.12);
+    border: 1px solid rgba(245,158,11,0.35);
+    border-radius: 20px;
+    padding: 3px 10px;
+    font-size: 11px;
+    color: var(--warning);
+    font-family: var(--font-mono);
+  }
+
   .content {
     flex: 1;
     display: flex;
@@ -380,7 +403,7 @@
 
   .mapping-row {
     display: grid;
-    grid-template-columns: 110px 1fr 120px 140px 120px 1fr 96px 96px;
+    grid-template-columns: 110px 1fr 130px 120px 140px 120px 1fr 96px 96px;
     gap: 8px;
     align-items: center;
     padding: 8px 10px;
@@ -465,6 +488,44 @@
 
   .mapping-status.error {
     color: var(--danger);
+  }
+
+  .base-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid transparent;
+    margin-top: 4px;
+  }
+
+  .base-badge.is-base {
+    background: rgba(99,102,241,0.15);
+    border-color: rgba(99,102,241,0.4);
+    color: var(--accent);
+  }
+
+  .base-badge.is-base:hover {
+    background: rgba(239,68,68,0.1);
+    border-color: rgba(239,68,68,0.35);
+    color: var(--danger);
+    content: 'Reset';
+  }
+
+  .base-badge.not-base {
+    background: var(--surface3);
+    border-color: var(--border);
+    color: var(--muted2);
+  }
+
+  .base-badge.not-base:hover {
+    background: rgba(99,102,241,0.1);
+    border-color: rgba(99,102,241,0.35);
+    color: var(--accent);
   }
 
   @media (max-width: 1200px) {
@@ -730,6 +791,63 @@
     font-size: 12px;
     margin: 8px 0;
   }
+
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+
+  .filter-bar label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--muted2);
+    margin-right: 4px;
+  }
+
+  .filter-btn {
+    background: var(--surface2);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s;
+  }
+
+  .filter-btn:hover {
+    background: var(--surface3);
+    color: var(--text);
+  }
+
+  .filter-btn.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+
+  .cm-preset {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    padding: 6px 8px;
+    font-size: 12px;
+    outline: none;
+    cursor: pointer;
+  }
+
+  .cm-preset:focus {
+    border-color: var(--accent);
+  }
 </style>
 </head>
 
@@ -771,6 +889,8 @@
   <main>
     <div class="toolbar">
       <span class="set-label placeholder" id="selected-label">No set selected</span>
+      <span class="stale-badge" id="stale-badge" style="display:none">↻ Mappings changed — run dry-run to refresh counts</span>
+      <button class="btn-fill" id="btn-fill" disabled title="Only adds missing cardtrader IDs to existing detailed variants. Never rewrites variant shape.">↓ Fill CardTrader</button>
       <button class="btn-dry-run" id="btn-dry" disabled>▷ Dry run</button>
       <button class="btn-apply" id="btn-apply" disabled>⚡ Apply</button>
     </div>
@@ -792,16 +912,19 @@
   const setSearch = document.getElementById('set-search')
   const setList = document.getElementById('set-list')
   const selectedLabel = document.getElementById('selected-label')
+  const btnFill = document.getElementById('btn-fill')
   const btnDry = document.getElementById('btn-dry')
   const btnApply = document.getElementById('btn-apply')
   const logPanel = document.getElementById('log-panel')
   const reportPanel = document.getElementById('report-panel')
   const modeBadge = document.getElementById('mode-badge')
+  const staleBadge = document.getElementById('stale-badge')
 
   let allSets = []
   let selectedSet = null
   let running = false
   let currentReportBlocksApply = false
+  let mappingsChangedSinceLastRun = false
 
   const savedRepo = localStorage.getItem('repo') ?? ''
   const savedCardmarketJson = localStorage.getItem('cardmarketJson') ?? ''
@@ -841,6 +964,7 @@
       currentReportBlocksApply = false
       selectedLabel.textContent = 'No set selected'
       selectedLabel.classList.add('placeholder')
+      btnFill.disabled = true
       btnDry.disabled = true
       btnApply.disabled = true
       btnApply.title = ''
@@ -852,6 +976,18 @@
 
   setSearch.addEventListener('input', () => {
     renderSetList(setSearch.value.trim().toLowerCase())
+  })
+
+  btnFill.addEventListener('click', () => {
+    if (!selectedSet || running) return
+
+    const apply = confirm(
+      `Fill missing CardTrader IDs for "${selectedSet}"?\n\n` +
+      'OK — Apply changes now (safe: never rewrites variant shape)\n' +
+      'Cancel — Preview only (dry-run)'
+    )
+
+    run(apply, true)
   })
 
   btnDry.addEventListener('click', () => run(false))
@@ -928,6 +1064,7 @@
     currentReportBlocksApply = false
     selectedLabel.textContent = set
     selectedLabel.classList.remove('placeholder')
+    btnFill.disabled = running
     btnDry.disabled = running
     btnApply.disabled = running
     btnApply.title = ''
@@ -944,10 +1081,10 @@
       .catch(() => {})
   }
 
-  async function run(apply) {
+  async function run(apply, fillMissingCardtrader = false) {
     if (!selectedSet || running) return
 
-    if (apply && currentReportBlocksApply) {
+    if (apply && currentReportBlocksApply && !fillMissingCardtrader) {
       alert('Apply is blocked until all required CardMarket mappings are completed.')
       return
     }
@@ -957,9 +1094,17 @@
     if (!repo) return
 
     running = true
+    btnFill.disabled = true
     btnDry.disabled = true
     btnApply.disabled = true
-    modeBadge.textContent = apply ? 'applying…' : 'dry-run…'
+    mappingsChangedSinceLastRun = false
+    staleBadge.style.display = 'none'
+
+    const modeLabel = fillMissingCardtrader
+      ? (apply ? 'fill-applying…' : 'fill-preview…')
+      : (apply ? 'applying…' : 'dry-run…')
+
+    modeBadge.textContent = modeLabel
     logPanel.innerHTML = ''
     reportPanel.innerHTML = ''
 
@@ -975,6 +1120,7 @@
           apply,
           cardmarketJson: cardmarketJsonInput.value.trim() || undefined,
           cardmarketMap: cardmarketMapInput.value.trim() || undefined,
+          fillMissingCardtrader: fillMissingCardtrader || undefined,
         }),
       })
 
@@ -1015,8 +1161,9 @@
       appendLog(error instanceof Error ? error.message : String(error), true)
     } finally {
       running = false
-      btnDry.disabled = false
-      btnApply.disabled = currentReportBlocksApply
+      btnFill.disabled = !selectedSet
+      btnDry.disabled = !selectedSet
+      btnApply.disabled = !selectedSet || currentReportBlocksApply
       modeBadge.textContent = 'idle'
     }
   }
@@ -1092,6 +1239,18 @@
       <div class="report-section">
     `
 
+    const hasCardmarketRows = (report.matched ?? []).some((m) => m.cardmarketReview?.products?.length)
+
+    if (hasCardmarketRows) {
+      html += `
+        <div class="filter-bar">
+          <label>Filter:</label>
+          <button class="filter-btn active" onclick="setCardFilter('all', this)">All cards</button>
+          <button class="filter-btn" onclick="setCardFilter('needs-mapping', this)">Needs CM mapping</button>
+        </div>
+      `
+    }
+
     if (report.matched?.length) {
       html += `<h3>Matched cards</h3>`
 
@@ -1151,7 +1310,7 @@
         : '<span class="tag ok">safe</span>'
 
     return `
-      <details>
+      <details data-cm-needs-mapping="${needsCardmarketMapping}">
         <summary>
           <span class="card-title">${escapeHtml(file)}</span>
           <span class="card-meta">
@@ -1348,6 +1507,14 @@
           <div>
             <div class="mapping-product-id">${escapeHtml(product.productId)}</div>
             <span class="tag ${product.bucket === 'additional' ? 'warning' : ''}">${escapeHtml(product.bucket)}</span>
+            <span
+              class="base-badge ${product.bucket === 'base' ? 'is-base' : 'not-base'}"
+              title="${product.bucket === 'base' ? 'This is the auto-mapped base product. Click to unset.' : 'Set this product as the auto-mapped base.'}"
+              onclick="toggleBaseOverride(this)"
+              data-card-id="${escapeAttr(review.cardId)}"
+              data-product-id="${escapeAttr(product.productId)}"
+              data-is-base="${product.bucket === 'base'}"
+            >${product.bucket === 'base' ? '★ base' : '☆ set base'}</span>
           </div>
 
           <div class="mapping-product-meta">
@@ -1355,6 +1522,10 @@
             ${product.variantLabel ? `<small>${escapeHtml(product.variantLabel)}</small>` : '<small>No variant label</small>'}
             ${variantKey ? `<small data-mapped-line>Mapped: ${escapeHtml(variantKey)}</small>` : '<small data-mapped-line>Not mapped</small>'}
           </div>
+
+          <select class="cm-preset" onchange="applyMappingPreset(this)">
+            ${renderPresetOptions()}
+          </select>
 
           <select class="cm-type">
             ${renderTypeOptions(type)}
@@ -1520,6 +1691,8 @@
         localStorage.setItem('cardmarketMap', data.mappingPath)
       }
 
+      mappingsChangedSinceLastRun = true
+      staleBadge.style.display = ''
       setMappingStatus(status, 'Saved. Run dry-run to refresh counts.', false)
       updateMappingRowAfterSave(row, variant)
     } catch (error) {
@@ -1572,6 +1745,8 @@
       row.querySelector('.cm-size').value = ''
       row.querySelector('.cm-stamps').value = ''
 
+      mappingsChangedSinceLastRun = true
+      staleBadge.style.display = ''
       setMappingStatus(status, 'Cleared. Run dry-run to refresh counts.', false)
       updateMappingRowAfterClear(row)
     } catch (error) {
@@ -1619,11 +1794,140 @@
     return parts.join('|')
   }
 
+  async function toggleBaseOverride(badge) {
+    const cardmarketJson = cardmarketJsonInput.value.trim()
+    const cardmarketMap = cardmarketMapInput.value.trim()
+    const cardId = badge.dataset.cardId
+    const productId = Number(badge.dataset.productId)
+    const isCurrentlyBase = badge.dataset.isBase === 'true'
+
+    if (!cardmarketJson) {
+      alert('CardMarket JSON path is required.')
+      return
+    }
+
+    badge.style.opacity = '0.5'
+    badge.style.pointerEvents = 'none'
+
+    try {
+      const body = isCurrentlyBase
+        ? { cardmarketJson, cardmarketMap: cardmarketMap || undefined, cardId, productId, clearBase: true }
+        : { cardmarketJson, cardmarketMap: cardmarketMap || undefined, cardId, productId, setBase: true }
+
+      const res = await fetch('/api/cardmarket-map', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.error ?? data.message ?? 'Failed')
+      }
+
+      if (data.mappingPath && !cardmarketMapInput.value.trim()) {
+        cardmarketMapInput.value = data.mappingPath
+        localStorage.setItem('cardmarketMap', data.mappingPath)
+      }
+
+      mappingsChangedSinceLastRun = true
+      staleBadge.style.display = ''
+
+      /**
+       * Update all badges in this mapping editor block.
+       *
+       * Find the surrounding mapping editor so we can update all rows:
+       * - The clicked row becomes the new base (or cleared if unsetting)
+       * - All other rows become non-base
+       */
+      const editor = badge.closest('.mapping-editor')
+      const allBadges = editor ? editor.querySelectorAll('.base-badge') : []
+
+      for (const b of allBadges) {
+        const bId = Number(b.dataset.productId)
+        const isNewBase = !isCurrentlyBase && bId === productId
+
+        b.className = `base-badge ${isNewBase ? 'is-base' : 'not-base'}`
+        b.dataset.isBase = String(isNewBase)
+        b.title = isNewBase
+          ? 'This is the auto-mapped base product. Click to unset.'
+          : 'Set this product as the auto-mapped base.'
+        b.textContent = isNewBase ? '★ base' : '☆ set base'
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error))
+    } finally {
+      badge.style.opacity = ''
+      badge.style.pointerEvents = ''
+    }
+  }
+
   function setMappingStatus(el, message, isError = false) {
     if (!el) return
 
     el.textContent = message
     el.className = `mapping-status ${isError ? 'error' : 'ok'}`
+  }
+
+  function renderPresetOptions() {
+    const presets = [
+      ['', 'Preset…'],
+      ['normal', 'Normal'],
+      ['holo', 'Holo'],
+      ['reverse', 'Reverse'],
+      ['cosmos-holo', 'Cosmos Holo'],
+      ['cosmos-reverse', 'Reverse Cosmos'],
+      ['set-logo-stamp', 'Set-Logo Stamp'],
+      ['pokeball-reverse', 'Poké Ball Reverse'],
+      ['masterball-reverse', 'Master Ball Reverse'],
+      ['jumbo-holo', 'Jumbo Holo'],
+    ]
+
+    return presets.map(([value, label]) => {
+      return `<option value="${escapeAttr(value)}">${escapeHtml(label)}</option>`
+    }).join('')
+  }
+
+  const PRESETS = {
+    'normal':              { type: 'normal',   foil: '',          size: '',      stamps: '' },
+    'holo':                { type: 'holo',     foil: '',          size: '',      stamps: '' },
+    'reverse':             { type: 'reverse',  foil: '',          size: '',      stamps: '' },
+    'cosmos-holo':         { type: 'holo',     foil: 'cosmos',    size: '',      stamps: '' },
+    'cosmos-reverse':      { type: 'reverse',  foil: 'cosmos',    size: '',      stamps: '' },
+    'set-logo-stamp':      { type: 'normal',   foil: '',          size: '',      stamps: 'set-logo' },
+    'pokeball-reverse':    { type: 'reverse',  foil: 'pokeball',  size: '',      stamps: '' },
+    'masterball-reverse':  { type: 'reverse',  foil: 'masterball',size: '',      stamps: '' },
+    'jumbo-holo':          { type: 'holo',     foil: '',          size: 'jumbo', stamps: '' },
+  }
+
+  function applyMappingPreset(select) {
+    const preset = PRESETS[select.value]
+    if (!preset) return
+
+    const row = select.closest('.mapping-row')
+    row.querySelector('.cm-type').value = preset.type
+    row.querySelector('.cm-foil').value = preset.foil
+    row.querySelector('.cm-size').value = preset.size
+    row.querySelector('.cm-stamps').value = preset.stamps
+
+    select.value = ''
+  }
+
+  function setCardFilter(filter, btn) {
+    document.querySelectorAll('.filter-btn').forEach((b) => {
+      b.classList.toggle('active', b === btn)
+    })
+
+    const cards = reportPanel.querySelectorAll('details[data-cm-needs-mapping]')
+
+    for (const card of cards) {
+      if (filter === 'needs-mapping') {
+        card.hidden = card.dataset.cmNeedsMapping !== 'true'
+      } else {
+        card.hidden = false
+      }
+    }
   }
 
   function normaliseSkus(skus) {

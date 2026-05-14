@@ -5,6 +5,7 @@ interface CliOptions {
 	set?: string
 	apply: boolean
 	help: boolean
+	fillMissingCardtrader: boolean
 
 	/**
 	 * Optional CardMarket merge export from your separate script.
@@ -43,7 +44,12 @@ if (!options.set) {
 console.log('')
 console.log('Pricing-ID Tooling')
 console.log('------------------')
-console.log(`Mode: ${options.apply ? 'apply' : 'dry-run'}`)
+
+const modeLabel = options.fillMissingCardtrader
+	? `${options.apply ? 'apply' : 'dry-run'} (fill-missing-cardtrader)`
+	: options.apply ? 'apply' : 'dry-run'
+
+console.log(`Mode: ${modeLabel}`)
 console.log(`Repo: ${options.repo}`)
 console.log(`Set:  ${options.set}`)
 
@@ -63,6 +69,7 @@ await runEnrichment({
 	apply: options.apply,
 	cardmarketJson: options.cardmarketJson,
 	cardmarketMap: options.cardmarketMap,
+	fillMissingCardtrader: options.fillMissingCardtrader,
 	log: console.log,
 }).catch((error) => {
 	console.error('')
@@ -77,6 +84,7 @@ function parseArgs(args: string[]): CliOptions {
 		set: getArg(args, '--set'),
 		apply: args.includes('--apply'),
 		help: args.includes('--help') || args.includes('-h'),
+		fillMissingCardtrader: args.includes('--fill-missing-cardtrader'),
 		cardmarketJson: getArg(args, '--cardmarket-json'),
 		cardmarketMap: getArg(args, '--cardmarket-map'),
 	}
@@ -107,6 +115,10 @@ Examples:
 
   bun src/cli.ts --repo H:/cards-database --set "Scarlet & Violet/Obsidian Flames" --apply
 
+  bun src/cli.ts --repo H:/cards-database --set "Scarlet & Violet/151" --fill-missing-cardtrader
+
+  bun src/cli.ts --repo H:/cards-database --set "Scarlet & Violet/151" --fill-missing-cardtrader --apply
+
   bun src/cli.ts --repo H:/cards-database --set "Scarlet & Violet/Obsidian Flames" --cardmarket-json ./cardmarket-OBF-merged.json
 
   bun src/cli.ts --repo H:/cards-database --set "Scarlet & Violet/Obsidian Flames" --cardmarket-json ./cardmarket-OBF-merged.json --cardmarket-map ./cardmarket-OBF-merged.manual-map.json
@@ -120,6 +132,11 @@ Options:
 
   --apply                    Write changes to card files.
                              Without this, the run is dry-run only.
+
+  --fill-missing-cardtrader  Safe mode: only add missing cardtrader IDs to
+                             existing detailed variants. Never converts simple
+                             variants, never creates variants, never overwrites
+                             existing IDs, never removes top-level thirdParty.
 
   --cardmarket-json <path>   Optional CardMarket merged export JSON from your
                              CardMarket script.

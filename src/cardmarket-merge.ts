@@ -59,6 +59,19 @@ export interface CardmarketManualMap {
 		updatedAt: string
 	}
 	cards: Record<string, CardmarketManualCardMap>
+
+	/**
+	 * Per-card base product overrides.
+	 *
+	 * Keyed by canonical card ID (e.g. "OBF-013").
+	 * Value is the CardMarket product ID that should be treated as the
+	 * auto-mapped base product for that card.
+	 *
+	 * CardMarket does not always list the plain normal/holo/reverse product
+	 * first, so this lets the user correct the designation without having to
+	 * manually map every product on the card.
+	 */
+	baseOverrides?: Record<string, number>
 }
 
 /**
@@ -193,31 +206,53 @@ export function getCardmarketReviewForCard(
 
 	const manualCardMap = context.mapping.cards[cardId] ?? {}
 
+	/**
+	 * Determine which product is the base (auto-mapped) product.
+	 *
+	 * Default: the product whose `bucket === 'base'` in the CardMarket export.
+	 *
+	 * Override: if the user has assigned a different product as the base via
+	 * `baseOverrides[cardId]`, that product ID takes precedence.
+	 *
+	 * This fixes the common case where CardMarket lists a stamped/cosmos/etc.
+	 * product first, making it the "base" even though it is not the plain
+	 * normal/holo variant.
+	 */
+	const baseOverride = context.mapping.baseOverrides?.[cardId]
+
+	const isBaseProduct = (productId: number): boolean => {
+		if (baseOverride !== undefined) {
+			return productId === baseOverride
+		}
+
+		const product = merged.cardmarketProducts.find((p) => p.productId === productId)
+		return product?.bucket === 'base'
+	}
+
 	const products = merged.cardmarketProducts.map((product): CardmarketProductReview => {
 		const manualMapping = manualCardMap[String(product.productId)]
 
 		/**
-		 * CardMarket base products are usually the main/default listing.
+		 * The base product is auto-mapped from the inferred SKU variant.
+		 * All other products must be manually mapped.
 		 *
-		 * Important:
-		 * - For common/uncommon cards, that is usually normal.
-		 * - For ex/full-art/illustration/holo-only cards, that is usually holo.
-		 *
-		 * So the caller can pass an autoBaseVariant inferred from TCGTracking
-		 * SKUs instead of hardcoding base = normal.
+		 * Manual mapping always wins — the user can override the auto-mapped
+		 * variant by explicitly saving a mapping for the base product.
 		 */
-		const autoMapping =
-			product.bucket === 'base'
-				? autoBaseVariant
-				: undefined
+		const autoMapping = isBaseProduct(product.productId) ? autoBaseVariant : undefined
 
 		const mapping = manualMapping ?? autoMapping
 		const variantKey = mapping ? cardmarketVariantKey(mapping) : undefined
 
+		/**
+		 * Report the effective bucket so the UI reflects any base override.
+		 */
+		const effectiveBucket = isBaseProduct(product.productId) ? 'base' : 'additional'
+
 		return {
 			productId: product.productId,
 			name: product.name,
-			bucket: product.bucket,
+			bucket: effectiveBucket,
 			variantLabel: product.variantLabel ?? '',
 			url: product.url,
 			mapping,
@@ -226,21 +261,21 @@ export function getCardmarketReviewForCard(
 	})
 
 	/**
-	 * Only additional CardMarket products require manual mapping.
-	 *
-	 * Base rows are auto-mapped using the inferred base variant.
+	 * Only non-base products that have no mapping require action.
+	 * The base product is always auto-mapped so it never blocks apply.
 	 */
-	const additionalProducts = products.filter((product) => product.bucket === 'additional')
-	const unmappedAdditionalCount = additionalProducts.filter((product) => !product.mapping).length
+	const unmappedCount = products.filter(
+		(product) => !product.mapping,
+	).length
 
 	const mappedCount = products.filter((product) => Boolean(product.mapping)).length
 
 	return {
 		cardId,
 		products,
-		needsMapping: unmappedAdditionalCount > 0,
+		needsMapping: unmappedCount > 0,
 		mappedCount,
-		unmappedCount: unmappedAdditionalCount,
+		unmappedCount,
 	}
 }
 
@@ -316,6 +351,33 @@ export function removeCardmarketManualMapping(
 	}
 }
 
+export function setCardmarketBaseOverride(
+	mapping: CardmarketManualMap,
+	cardId: string,
+	productId: number,
+): CardmarketManualMap {
+	return {
+		...mapping,
+		baseOverrides: {
+			...(mapping.baseOverrides ?? {}),
+			[cardId]: productId,
+		},
+	}
+}
+
+export function clearCardmarketBaseOverride(
+	mapping: CardmarketManualMap,
+	cardId: string,
+): CardmarketManualMap {
+	const next = { ...(mapping.baseOverrides ?? {}) }
+	delete next[cardId]
+
+	return {
+		...mapping,
+		...(Object.keys(next).length > 0 ? { baseOverrides: next } : { baseOverrides: undefined }),
+	}
+}
+
 export function cardmarketVariantKey(variant: CardmarketManualVariant): string {
 	const parts = [`type:${variant.type}`]
 
@@ -372,7 +434,7 @@ async function loadOrCreateManualMap(mappingPath: string): Promise<CardmarketMan
 			return createEmptyManualMap()
 		}
 
-		return {
+		const result: CardmarketManualMap = {
 			meta: {
 				tool: 'pricing-id-tooling',
 				version: 1,
@@ -380,6 +442,12 @@ async function loadOrCreateManualMap(mappingPath: string): Promise<CardmarketMan
 			},
 			cards: mapping.cards,
 		}
+
+		if (mapping.baseOverrides && typeof mapping.baseOverrides === 'object') {
+			result.baseOverrides = mapping.baseOverrides
+		}
+
+		return result
 	} catch (error) {
 		if (isNodeError(error) && error.code === 'ENOENT') {
 			return createEmptyManualMap()

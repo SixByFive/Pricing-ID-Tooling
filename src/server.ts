@@ -1,9 +1,11 @@
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import {
+	clearCardmarketBaseOverride,
 	loadCardmarketMergeContext,
 	removeCardmarketManualMapping,
 	saveCardmarketManualMap,
+	setCardmarketBaseOverride,
 	setCardmarketManualMapping,
 	type CardmarketManualVariant,
 } from './cardmarket-merge'
@@ -63,6 +65,7 @@ Bun.serve({
 					apply?: boolean
 					cardmarketJson?: string
 					cardmarketMap?: string
+					fillMissingCardtrader?: boolean
 				}>(req)
 
 				if (!body.ok) {
@@ -74,6 +77,7 @@ Bun.serve({
 				const apply = body.data.apply ?? false
 				const cardmarketJson = body.data.cardmarketJson?.trim() || undefined
 				const cardmarketMap = body.data.cardmarketMap?.trim() || undefined
+				const fillMissingCardtrader = body.data.fillMissingCardtrader ?? false
 
 				if (!repo || !set) {
 					return json({ error: 'repo and set are required' }, 400)
@@ -105,6 +109,7 @@ Bun.serve({
 								apply,
 								cardmarketJson,
 								cardmarketMap,
+								fillMissingCardtrader,
 								log: sendLine,
 							})
 
@@ -157,6 +162,16 @@ Bun.serve({
 					cardId?: string
 					productId?: number
 					variant?: CardmarketManualVariant | null
+					/**
+					 * Set productId as the base (auto-mapped) product for this card.
+					 * Mutually exclusive with variant and clearBase.
+					 */
+					setBase?: boolean
+					/**
+					 * Clear any base override for this card, restoring the bucket default.
+					 * When true, productId is ignored.
+					 */
+					clearBase?: boolean
 				}>(req)
 
 				if (!body.ok) {
@@ -167,14 +182,15 @@ Bun.serve({
 				const cardmarketMap = body.data.cardmarketMap?.trim() || undefined
 				const cardId = body.data.cardId?.trim() ?? ''
 				const productId = body.data.productId
+				const setBase = body.data.setBase ?? false
+				const clearBase = body.data.clearBase ?? false
 
-				if (!cardmarketJson || !cardId || typeof productId !== 'number') {
-					return json(
-						{
-							error: 'cardmarketJson, cardId, and productId are required',
-						},
-						400,
-					)
+				if (!cardmarketJson || !cardId) {
+					return json({ error: 'cardmarketJson and cardId are required' }, 400)
+				}
+
+				if (!setBase && !clearBase && typeof productId !== 'number') {
+					return json({ error: 'productId is required for variant operations' }, 400)
 				}
 
 				const context = await loadCardmarketMergeContext(cardmarketJson, cardmarketMap)
@@ -183,18 +199,26 @@ Bun.serve({
 					return json({ error: 'Could not load CardMarket merge context' }, 400)
 				}
 
-				const nextMapping = body.data.variant
-					? setCardmarketManualMapping(
-							context.mapping,
-							cardId,
-							productId,
-							body.data.variant,
-						)
-					: removeCardmarketManualMapping(
-							context.mapping,
-							cardId,
-							productId,
-						)
+				let nextMapping = context.mapping
+
+				if (clearBase) {
+					nextMapping = clearCardmarketBaseOverride(nextMapping, cardId)
+				} else if (setBase && typeof productId === 'number') {
+					nextMapping = setCardmarketBaseOverride(nextMapping, cardId, productId)
+				} else if (body.data.variant) {
+					nextMapping = setCardmarketManualMapping(
+						nextMapping,
+						cardId,
+						productId as number,
+						body.data.variant,
+					)
+				} else {
+					nextMapping = removeCardmarketManualMapping(
+						nextMapping,
+						cardId,
+						productId as number,
+					)
+				}
 
 				await saveCardmarketManualMap(context.mappingPath, nextMapping)
 

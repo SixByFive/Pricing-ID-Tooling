@@ -11,7 +11,7 @@ import {
 } from './cardmarket-merge'
 import { fetchSetProducts, fetchSetSkus, CATEGORIES, type CategoryId } from './tcgtracking'
 import { matchProductsToCards } from './matcher'
-import { buildVariants, writeCardFile } from './writer'
+import { buildVariants, fillMissingCardtraderIds, writeCardFile } from './writer'
 import type {
 	AmbiguousCard,
 	CardData,
@@ -44,6 +44,17 @@ export interface RunOptions {
 	 * <cardmarket-json-name>.manual-map.json
 	 */
 	cardmarketMap?: string
+
+	/**
+	 * Safe fill mode: only add missing cardtrader IDs to existing detailed variants.
+	 *
+	 * When true:
+	 * - Never converts simple variants to detailed array shape
+	 * - Never creates new variants
+	 * - Never removes top-level thirdParty
+	 * - Never overwrites existing cardmarket, tcgplayer, or cardtrader
+	 */
+	fillMissingCardtrader?: boolean
 }
 
 export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport> {
@@ -51,8 +62,9 @@ export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport>
 	const repoRoot = path.resolve(opts.repo)
 	const setRelPath = opts.set.replace(/\\/g, '/')
 	const mode = opts.apply ? 'apply' : 'dry-run'
+	const fillMode = opts.fillMissingCardtrader ?? false
 
-	log(`Mode:  ${mode}`)
+	log(`Mode:  ${mode}${fillMode ? ' (fill-missing-cardtrader)' : ''}`)
 	log(`Repo:  ${repoRoot}`)
 	log(`Set:   ${setRelPath}`)
 
@@ -195,6 +207,7 @@ export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport>
 
 	if (opts.apply) {
 		if (
+			!fillMode &&
 			cardmarketContext &&
 			cardmarketSummary.cardmarketUnmappedProducts > 0
 		) {
@@ -206,32 +219,53 @@ export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport>
 		log('')
 		log('Writing files...')
 
+		const fileErrors: Array<{ file: string; reason: string }> = []
+
 		for (const match of matched) {
-			const source = await fs.readFile(match.cardFile, 'utf8')
+			try {
+				const source = await fs.readFile(match.cardFile, 'utf8')
 
-			/**
-			 * Writer currently uses TCGTracking IDs.
-			 *
-			 * Next step:
-			 * update writer.ts so manual CardMarket mappings can override/fill
-			 * cardmarket IDs per exact variant.
-			 */
-			const newSource = buildVariants(source, match.products, {
-				cardmarketReview: match.cardmarketReview,
-			})
+				let newSource: string
 
-			const normalisedNewSource = ensureNewlineAtEof(newSource)
+				if (fillMode) {
+					newSource = fillMissingCardtraderIds(source, match.products)
+				} else {
+					newSource = buildVariants(source, match.products, {
+						cardmarketReview: match.cardmarketReview,
+					})
+				}
 
-			if (normalisedNewSource === source) {
-				skipped++
-				continue
+				const normalisedNewSource = ensureNewlineAtEof(newSource)
+
+				if (normalisedNewSource === ensureNewlineAtEof(source)) {
+					skipped++
+					continue
+				}
+
+				await writeCardFile(match.cardFile, normalisedNewSource)
+				written++
+			} catch (error) {
+				const reason = error instanceof Error ? error.message : String(error)
+				const shortPath = path.relative(repoRoot, match.cardFile)
+
+				log(`  ERROR: ${shortPath}`)
+				log(`         ${reason.split('\n')[0]}`)
+
+				fileErrors.push({ file: match.cardFile, reason })
 			}
-
-			await writeCardFile(match.cardFile, normalisedNewSource)
-			written++
 		}
 
-		log(`Written: ${written}  Skipped (already complete): ${skipped}`)
+		log(`Written: ${written}  Skipped (already complete): ${skipped}${fileErrors.length > 0 ? `  Errors: ${fileErrors.length}` : ''}`)
+
+		if (fileErrors.length > 0) {
+			const summary = fileErrors
+				.map(({ file, reason }) => `  ${file}\n  ${reason}`)
+				.join('\n\n')
+
+			throw new Error(
+				`${fileErrors.length} file(s) failed during write:\n\n${summary}`,
+			)
+		}
 	}
 
 	const report: EnrichmentReport = {
