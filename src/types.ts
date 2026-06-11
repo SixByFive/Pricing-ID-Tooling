@@ -177,6 +177,24 @@ export interface VariantPreviewEntry {
 // Matching result shapes
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Variant diff shapes
+// ---------------------------------------------------------------------------
+
+export interface VariantChange {
+	/** Stable variant key, e.g. "type:normal" or "type:reverse|foil:cosmos" */
+	key: string
+	action: 'add' | 'update' | 'noop'
+	/** All third-party IDs that will be present after the change. */
+	idsNew: Record<string, number>
+	/** IDs being added or changed by this run. Empty for noop entries. */
+	idsAdded: Record<string, number>
+}
+
+// ---------------------------------------------------------------------------
+// Matching result shapes
+// ---------------------------------------------------------------------------
+
 export type MatchMethod = 'collector-number' | 'name-fallback'
 
 export interface MatchedCard {
@@ -197,6 +215,14 @@ export interface MatchedCard {
 	 * Present when the user supplies a CardMarket merge JSON.
 	 */
 	cardmarketReview?: CardmarketCardReview
+
+	/**
+	 * Per-variant diff computed before writing.
+	 *
+	 * Present in both dry-run and apply mode reports. Shows what `buildVariants`
+	 * would add or update for this card.
+	 */
+	variantChanges?: VariantChange[]
 }
 
 export interface AmbiguousCard {
@@ -267,6 +293,12 @@ export interface EnrichmentReport {
 		reviewRequired: number
 		written: number
 		skipped: number
+
+		/**
+		 * Cards that have no parseable `variants` property (e.g. `variants: true`
+		 * or absent entirely). These are skipped without modification.
+		 */
+		noVariants: number
 
 		/**
 		 * CardMarket manual mapping summary.

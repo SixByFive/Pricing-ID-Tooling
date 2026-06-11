@@ -11,7 +11,14 @@ import {
 } from './cardmarket-merge'
 import { fetchSetProducts, fetchSetSkus, CATEGORIES, type CategoryId } from './tcgtracking'
 import { matchProductsToCards } from './matcher'
-import { buildVariants, fillMissingCardtraderIds, writeCardFile } from './writer'
+import {
+	buildVariants,
+	computeVariantDiff,
+	fillMissingCardtraderIds,
+	hasVariants,
+	writeCardFile,
+} from './writer'
+import { resolveProductVariants } from './variant-resolver'
 import type {
 	AmbiguousCard,
 	CardData,
@@ -201,70 +208,96 @@ export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport>
 		log(`CardMarket cards needing map:   ${cardmarketSummary.cardmarketCardsNeedingMapping}`)
 	}
 
-	// 6. Write files.
+	// 6. Apply guard.
+	if (
+		opts.apply &&
+		!fillMode &&
+		cardmarketContext &&
+		cardmarketSummary.cardmarketUnmappedProducts > 0
+	) {
+		throw new Error(
+			`Apply blocked: ${cardmarketSummary.cardmarketUnmappedProducts} CardMarket product mappings are still unmapped across ${cardmarketSummary.cardmarketCardsNeedingMapping} cards. Complete the CardMarket mapping before applying.`,
+		)
+	}
+
+	// 7. Compute per-card variant diffs (both modes) and write files (apply only).
 	let written = 0
 	let skipped = 0
+	let noVariantsCount = 0
+
+	const matchedWithDiffs: MatchedCard[] = []
+	const fileErrors: Array<{ file: string; reason: string }> = []
 
 	if (opts.apply) {
-		if (
-			!fillMode &&
-			cardmarketContext &&
-			cardmarketSummary.cardmarketUnmappedProducts > 0
-		) {
-			throw new Error(
-				`Apply blocked: ${cardmarketSummary.cardmarketUnmappedProducts} CardMarket product mappings are still unmapped across ${cardmarketSummary.cardmarketCardsNeedingMapping} cards. Complete the CardMarket mapping before applying.`,
-			)
-		}
-
 		log('')
 		log('Writing files...')
+	}
 
-		const fileErrors: Array<{ file: string; reason: string }> = []
+	for (const match of matched) {
+		try {
+			const source = await fs.readFile(match.cardFile, 'utf8')
 
-		for (const match of matched) {
-			try {
-				const source = await fs.readFile(match.cardFile, 'utf8')
+			if (!hasVariants(source)) {
+				noVariantsCount++
+				matchedWithDiffs.push(match)
+				continue
+			}
 
-				let newSource: string
-
-				if (fillMode) {
-					newSource = fillMissingCardtraderIds(source, match.products)
-				} else {
-					newSource = buildVariants(source, match.products, {
+			const variantChanges = fillMode
+				? undefined
+				: computeVariantDiff(source, match.products, {
 						cardmarketReview: match.cardmarketReview,
 					})
-				}
 
-				const normalisedNewSource = ensureNewlineAtEof(newSource)
+			matchedWithDiffs.push({ ...match, variantChanges })
 
-				if (normalisedNewSource === ensureNewlineAtEof(source)) {
-					skipped++
-					continue
-				}
+			if (!opts.apply) {
+				continue
+			}
 
-				await writeCardFile(match.cardFile, normalisedNewSource)
-				written++
-			} catch (error) {
-				const reason = error instanceof Error ? error.message : String(error)
-				const shortPath = path.relative(repoRoot, match.cardFile)
+			const newSource = fillMode
+				? fillMissingCardtraderIds(source, match.products)
+				: buildVariants(source, match.products, {
+						cardmarketReview: match.cardmarketReview,
+					})
 
+			const normalisedNewSource = ensureNewlineAtEof(newSource)
+
+			if (normalisedNewSource === ensureNewlineAtEof(source)) {
+				skipped++
+				continue
+			}
+
+			await writeCardFile(match.cardFile, normalisedNewSource)
+			written++
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error)
+			const shortPath = path.relative(repoRoot, match.cardFile)
+
+			if (opts.apply) {
 				log(`  ERROR: ${shortPath}`)
 				log(`         ${reason.split('\n')[0]}`)
-
-				fileErrors.push({ file: match.cardFile, reason })
 			}
-		}
 
-		log(`Written: ${written}  Skipped (already complete): ${skipped}${fileErrors.length > 0 ? `  Errors: ${fileErrors.length}` : ''}`)
+			fileErrors.push({ file: match.cardFile, reason })
+			matchedWithDiffs.push(match)
+		}
+	}
+
+	if (opts.apply) {
+		const parts = [`Written: ${written}  Skipped (already complete): ${skipped}`]
+
+		if (noVariantsCount > 0) parts.push(`No variants: ${noVariantsCount}`)
+		if (fileErrors.length > 0) parts.push(`Errors: ${fileErrors.length}`)
+
+		log(parts.join('  '))
 
 		if (fileErrors.length > 0) {
 			const summary = fileErrors
 				.map(({ file, reason }) => `  ${file}\n  ${reason}`)
 				.join('\n\n')
 
-			throw new Error(
-				`${fileErrors.length} file(s) failed during write:\n\n${summary}`,
-			)
+			throw new Error(`${fileErrors.length} file(s) failed during write:\n\n${summary}`)
 		}
 	}
 
@@ -298,13 +331,14 @@ export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport>
 			reviewRequired: reviewRequired.length,
 			written,
 			skipped,
+			noVariants: noVariantsCount,
 			cardmarketCardsWithReview: cardmarketSummary.cardmarketCardsWithReview,
 			cardmarketMappedProducts: cardmarketSummary.cardmarketMappedProducts,
 			cardmarketUnmappedProducts: cardmarketSummary.cardmarketUnmappedProducts,
 			cardmarketCardsNeedingMapping: cardmarketSummary.cardmarketCardsNeedingMapping,
 		},
 
-		matched,
+		matched: matchedWithDiffs,
 		ambiguous,
 		unmatched,
 		orphanProducts: orphans,
@@ -408,62 +442,26 @@ function attachCardmarketReviewToResults(
 function inferCardmarketBaseVariant(
 	products: TCGTrackingProduct[],
 ): CardmarketManualVariant {
-	const skuVars = new Set<string>()
+	// Use the full variant resolver so all SKU var text formats are handled
+	// (e.g. 'HoloFoil', not just the short code 'H').
+	const types = new Set<string>()
 
 	for (const product of products) {
-		for (const sku of Object.values(product.skus ?? {})) {
-			const value = readString(sku.var ?? sku.variant ?? sku.printing ?? sku.type)
-
-			if (value) {
-				skuVars.add(value.toUpperCase())
+		for (const { identity } of resolveProductVariants(product)) {
+			// Only plain (non-foil, non-stamp, standard-size) variants determine the base type.
+			if (!identity.foil && !identity.size && !(identity.stamp?.length)) {
+				types.add(identity.type)
 			}
 		}
 	}
 
-	const hasNormal = skuVars.has('N')
-	const hasHolo = skuVars.has('H')
-	const hasReverse = skuVars.has('RH')
+	// Priority: normal > holo > reverse.
+	// When both normal and reverse exist, normal is the base (they share one CardMarket listing).
+	if (types.has('normal')) return { type: 'normal' }
+	if (types.has('holo')) return { type: 'holo' }
+	if (types.has('reverse')) return { type: 'reverse' }
 
-	/**
-	 * Normal + reverse cards:
-	 * - CardMarket base product should be normal.
-	 * - Reverse is handled inside CardMarket's normal product variation system.
-	 */
-	if (hasNormal) {
-		return {
-			type: 'normal',
-		}
-	}
-
-	/**
-	 * Holo-only cards:
-	 * - ex cards
-	 * - illustration rares
-	 * - special illustration rares
-	 * - many holo rares
-	 */
-	if (hasHolo) {
-		return {
-			type: 'holo',
-		}
-	}
-
-	/**
-	 * Rare edge case:
-	 * reverse-only card.
-	 */
-	if (hasReverse) {
-		return {
-			type: 'reverse',
-		}
-	}
-
-	/**
-	 * Last fallback.
-	 */
-	return {
-		type: 'normal',
-	}
+	return { type: 'normal' }
 }
 
 function summariseCardmarketReviews(results: MatchResult[]): {

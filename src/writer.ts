@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises'
-import jscodeshift from 'jscodeshift'
 import {
 	resolveExistingVariant,
 	resolveProductVariants,
@@ -10,21 +9,49 @@ import type { CardmarketCardReview } from './cardmarket-merge'
 import type {
 	CardVariantDetailed,
 	TCGTrackingProduct,
+	VariantChange,
 } from './types'
 
-const j = jscodeshift.withParser('ts')
-
-type BNode = { type: string; [k: string]: any }
+// ---------------------------------------------------------------------------
+// Internal types
+// ---------------------------------------------------------------------------
 
 interface ParsedVariant {
 	fields: Array<{ name: string; rawValue: string }>
 	thirdParty: Record<string, number>
 }
 
+interface ResolvedVariantEntry {
+	identity: VariantIdentity
+	/**
+	 * Preserved from existing detailed variants in the file.
+	 * Absent for freshly-generated entries (Mode A or new special CM variants).
+	 */
+	existingFields?: Array<{ name: string; rawValue: string }>
+	existingThirdParty: Record<string, number>
+	product?: TCGTrackingProduct
+	cardmarketId?: number
+}
+
+interface ManualCardmarketMatch {
+	key: string
+	identity: VariantIdentity
+	cardmarketId: number
+	/**
+	 * When true this mapping can only merge into an existing variant.
+	 * Plain variants (type only, no foil/stamp/size) are merge-only because
+	 * they are always generated from TCGTracking SKU data and creating a
+	 * duplicate plain entry would produce two variants of the same type.
+	 */
+	mergeOnly: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
 export interface BuildVariantsOptions {
 	/**
-	 * Optional CardMarket review data attached during enrichment.
-	 *
 	 * When supplied, the writer uses manual CardMarket mappings as the sole
 	 * source of truth for cardmarket IDs. product.cardmarket_id is never used
 	 * as a fallback when this is present.
@@ -32,11 +59,31 @@ export interface BuildVariantsOptions {
 	cardmarketReview?: CardmarketCardReview
 }
 
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
 /**
- * Returns new source with the `variants` property updated.
+ * Returns true if the card source has a parseable `variants` property
+ * (an object or array literal). Returns false for cards with no variants
+ * property, or with non-object/non-array values like `variants: true`.
+ */
+export function hasVariants(source: string): boolean {
+	return findPropRange(source, 'variants') !== null
+}
+
+/**
+ * Returns new source with the `variants` property updated in-place.
  *
- * Also removes top-level `thirdParty` when variants become detailed,
- * because the IDs now belong inside each variant.
+ * Mode A (simple → detailed): existing variants is a non-array object or absent;
+ *   a fresh array is built from TCGTracking products + CardMarket mappings.
+ *
+ * Mode B (merge into existing): existing variants array is preserved; per-variant
+ *   thirdParty IDs are added/updated and new special CM variants are appended.
+ *
+ * Also removes the top-level `thirdParty` property once IDs live inside variants.
+ *
+ * Returns source unchanged when no parseable `variants` property is found.
  */
 export function buildVariants(
 	source: string,
@@ -52,41 +99,73 @@ export function buildVariants(
 	const propText = source.slice(variantsRange.start, variantsRange.end)
 	const isDetailed = /^variants\s*:\s*\[/.test(propText)
 	const baseIndent = lineIndent(source, variantsRange.start)
+	const hasCardmarketReview = Boolean(options.cardmarketReview)
 
-	let newPropText: string
-
-	if (isDetailed) {
-		const variants = parseVariantsArray(propText)
-
-		newPropText = renderVariantsBlock(
-			variants,
-			products,
-			baseIndent,
-			options.cardmarketReview,
-		)
-	} else {
-		newPropText = buildFreshVariantsBlock(
-			products,
-			baseIndent,
-			options.cardmarketReview,
-		)
-	}
+	const existing = isDetailed ? parseVariantsArray(propText) : []
+	const entries = assembleVariantEntries(existing, products, options.cardmarketReview)
+	const newPropText = renderEntriesBlock(entries, baseIndent, hasCardmarketReview)
 
 	let nextSource =
 		source.slice(0, variantsRange.start) +
 		newPropText +
 		source.slice(variantsRange.end)
 
-	/**
-	 * Remove old top-level thirdParty once variants have per-variant thirdParty.
-	 *
-	 * Important:
-	 * This only removes the card-level thirdParty property, not nested
-	 * variant.thirdParty objects.
-	 */
 	nextSource = removeTopLevelThirdParty(nextSource)
 
 	return nextSource === source ? source : nextSource
+}
+
+/**
+ * Computes what `buildVariants` would change without writing to disk.
+ * Returns one VariantChange per variant in the output.
+ */
+export function computeVariantDiff(
+	source: string,
+	products: TCGTrackingProduct[],
+	options: BuildVariantsOptions = {},
+): VariantChange[] {
+	const variantsRange = findPropRange(source, 'variants')
+
+	if (!variantsRange) {
+		return []
+	}
+
+	const propText = source.slice(variantsRange.start, variantsRange.end)
+	const isDetailed = /^variants\s*:\s*\[/.test(propText)
+	const hasCardmarketReview = Boolean(options.cardmarketReview)
+
+	const existing = isDetailed ? parseVariantsArray(propText) : []
+	const entries = assembleVariantEntries(existing, products, options.cardmarketReview)
+
+	return entries.map((entry): VariantChange => {
+		const key = variantKey(entry.identity)
+
+		const idsNew = mergeThirdPartyIds(
+			entry.existingThirdParty,
+			entry.product,
+			entry.cardmarketId,
+			hasCardmarketReview,
+		)
+
+		if (!entry.existingFields) {
+			return { key, action: 'add', idsNew, idsAdded: { ...idsNew } }
+		}
+
+		const idsAdded: Record<string, number> = {}
+
+		for (const [k, v] of Object.entries(idsNew)) {
+			if (entry.existingThirdParty[k] !== v) {
+				idsAdded[k] = v
+			}
+		}
+
+		return {
+			key,
+			action: Object.keys(idsAdded).length > 0 ? 'update' : 'noop',
+			idsNew,
+			idsAdded,
+		}
+	})
 }
 
 /**
@@ -180,6 +259,383 @@ export function fillMissingCardtraderIds(
 	const newPropText = `variants: [\n${elements.join(',\n')},\n${baseIndent}],`
 
 	return source.slice(0, variantsRange.start) + newPropText + source.slice(variantsRange.end)
+}
+
+// ---------------------------------------------------------------------------
+// Core pipeline
+// ---------------------------------------------------------------------------
+
+/**
+ * Assembles the complete ordered list of variant entries for a card.
+ *
+ * Mode A (existing is empty):
+ *   All entries come from TCGTracking products + CardMarket manual mappings.
+ *
+ * Mode B (existing is non-empty):
+ *   Existing variants are updated with IDs in-place (preserving field order).
+ *   New special CM variants (foil/stamp/size) not already present are appended.
+ *
+ * All entries are sorted together by canonical type order, with special
+ * variants grouped immediately after their base type.
+ */
+function assembleVariantEntries(
+	existing: ParsedVariant[],
+	products: TCGTrackingProduct[],
+	cardmarketReview?: CardmarketCardReview,
+): ResolvedVariantEntry[] {
+	const productsByVariantKey = buildProductVariantMap(products)
+	const entries: ResolvedVariantEntry[] = []
+	const coveredKeys = new Set<string>()
+
+	if (existing.length === 0) {
+		// ── Mode A: build all entries from TCGTracking products ──────────────
+		for (const { identity, product } of products.flatMap(resolveProductVariants)) {
+			const key = variantKey(identity)
+
+			if (coveredKeys.has(key)) {
+				continue
+			}
+
+			entries.push({
+				identity,
+				existingThirdParty: {},
+				product,
+				cardmarketId: getCardmarketIdForVariantKey(cardmarketReview, key),
+			})
+
+			coveredKeys.add(key)
+		}
+	} else {
+		// ── Mode B: update existing variants, preserve their field order ──────
+		for (const variant of existing) {
+			const resolvedId = resolveExistingVariant({
+				type: getStringField(variant, 'type') as CardVariantDetailed['type'],
+				foil: getStringField(variant, 'foil'),
+				stamp: getArrayField(variant, 'stamp'),
+				size: getStringField(variant, 'size'),
+			})
+
+			const key = resolvedId ? variantKey(resolvedId) : null
+
+			if (key) {
+				coveredKeys.add(key)
+			}
+
+			const identity: VariantIdentity = resolvedId ?? { type: 'normal' }
+
+			const product =
+				key !== null
+					? productsByVariantKey.get(key)
+					: products.length === 1 && existing.length === 1
+						? products[0]
+						: undefined
+
+			entries.push({
+				identity,
+				existingFields: variant.fields,
+				existingThirdParty: variant.thirdParty,
+				product,
+				cardmarketId: key !== null
+					? getCardmarketIdForVariantKey(cardmarketReview, key)
+					: undefined,
+			})
+		}
+	}
+
+	// ── Both modes: append new special CM variants not yet covered ────────────
+	for (const manualMatch of buildManualCardmarketMatches(cardmarketReview)) {
+		if (manualMatch.mergeOnly || coveredKeys.has(manualMatch.key)) {
+			continue
+		}
+
+		entries.push({
+			identity: manualMatch.identity,
+			existingThirdParty: {},
+			product: productsByVariantKey.get(manualMatch.key),
+			cardmarketId: manualMatch.cardmarketId,
+		})
+
+		coveredKeys.add(manualMatch.key)
+	}
+
+	return entries.sort((a, b) => variantSortValue(a.identity) - variantSortValue(b.identity))
+}
+
+function renderEntriesBlock(
+	entries: ResolvedVariantEntry[],
+	baseIndent: string,
+	hasCardmarketReview: boolean,
+): string {
+	const elements = entries.map((entry) => renderEntry(entry, baseIndent, hasCardmarketReview))
+	return `variants: [\n${elements.join(',\n')},\n${baseIndent}],`
+}
+
+function renderEntry(
+	entry: ResolvedVariantEntry,
+	baseIndent: string,
+	hasCardmarketReview: boolean,
+): string {
+	const i1 = baseIndent + '\t'
+	const i2 = i1 + '\t'
+	const i3 = i2 + '\t'
+
+	const tp = mergeThirdPartyIds(
+		entry.existingThirdParty,
+		entry.product,
+		entry.cardmarketId,
+		hasCardmarketReview,
+	)
+
+	const lines: string[] = []
+
+	if (entry.existingFields) {
+		// Mode B: preserve existing field order and raw values
+		for (const field of entry.existingFields) {
+			lines.push(`${i2}${field.name}: ${field.rawValue}`)
+		}
+	} else {
+		// Mode A / new special variant: generate fields from identity
+		lines.push(`${i2}type: '${entry.identity.type}'`)
+
+		if (entry.identity.foil) {
+			lines.push(`${i2}foil: '${entry.identity.foil}'`)
+		}
+
+		if (entry.identity.size) {
+			lines.push(`${i2}size: '${entry.identity.size}'`)
+		}
+
+		if (entry.identity.stamp && entry.identity.stamp.length > 0) {
+			const stamps = entry.identity.stamp.map((s) => `'${s}'`).join(', ')
+			lines.push(`${i2}stamp: [${stamps}]`)
+		}
+	}
+
+	if (Object.keys(tp).length > 0) {
+		const tpFields = orderedThirdPartyEntries(tp).map(([k, v]) => `${i3}${k}: ${v}`)
+		lines.push(`${i2}thirdParty: {\n${tpFields.join(',\n')}\n${i2}}`)
+	}
+
+	return `${i1}{\n${lines.join(',\n')}\n${i1}}`
+}
+
+// ---------------------------------------------------------------------------
+// Custom variants array parser (replaces jscodeshift)
+//
+// Only handles the constrained format used in TCGDex card files:
+//   - Object literal arrays with string/number/boolean/array/object values
+//   - No template literals, computed properties, or TypeScript type assertions
+// ---------------------------------------------------------------------------
+
+function parseVariantsArray(propText: string): ParsedVariant[] {
+	const s = propText
+		.replace(/^variants\s*:\s*/, '')
+		.trimEnd()
+		.replace(/,$/, '')
+		.trim()
+
+	if (!s.startsWith('[')) {
+		return []
+	}
+
+	const variants: ParsedVariant[] = []
+	let i = 1 // skip [
+
+	while (i < s.length) {
+		while (i < s.length && /[\s,]/.test(s[i])) {
+			i++
+		}
+
+		if (i >= s.length || s[i] === ']') {
+			break
+		}
+
+		if (s[i] !== '{') {
+			i++
+			continue
+		}
+
+		const end = findBalancedValueEnd(s, i, '{', '}')
+
+		if (end <= i) {
+			break
+		}
+
+		variants.push(parseVariantObject(s, i, end))
+		i = end
+	}
+
+	return variants
+}
+
+function parseVariantObject(s: string, objStart: number, objEnd: number): ParsedVariant {
+	const variant: ParsedVariant = { fields: [], thirdParty: {} }
+	let i = objStart + 1 // skip {
+
+	while (i < objEnd - 1) {
+		while (i < objEnd && /[\s,]/.test(s[i])) {
+			i++
+		}
+
+		if (i >= objEnd - 1) {
+			break
+		}
+
+		// Read property name (unquoted identifier or quoted string)
+		let name: string
+
+		if (s[i] === '"' || s[i] === "'") {
+			const q = s[i++]
+			const ns = i
+
+			while (i < s.length && s[i] !== q) {
+				if (s[i] === '\\') i++
+				i++
+			}
+
+			name = s.slice(ns, i++)
+		} else {
+			const ns = i
+
+			while (i < s.length && /[a-zA-Z0-9_$]/.test(s[i])) {
+				i++
+			}
+
+			name = s.slice(ns, i)
+		}
+
+		if (!name) {
+			i++
+			continue
+		}
+
+		// Skip whitespace + colon
+		while (i < s.length && (s[i] === ' ' || s[i] === '\t')) {
+			i++
+		}
+
+		if (s[i] !== ':') {
+			continue
+		}
+
+		i++
+
+		while (i < s.length && (s[i] === ' ' || s[i] === '\t')) {
+			i++
+		}
+
+		// Read value
+		const vs = i
+		const ve = readValueEnd(s, i)
+		const rawValue = s.slice(vs, ve).trim()
+		i = ve
+
+		if (name === 'thirdParty') {
+			parseThirdPartyInto(rawValue, variant.thirdParty)
+		} else {
+			variant.fields.push({ name, rawValue })
+		}
+	}
+
+	return variant
+}
+
+/**
+ * Returns the end position (exclusive) of the value starting at `start`.
+ * Handles: quoted strings, balanced brackets, and scalars.
+ */
+function readValueEnd(s: string, start: number): number {
+	let i = start
+	const c = s[i]
+
+	if (c === '"' || c === "'" || c === '`') {
+		const q = c
+		i++
+
+		while (i < s.length) {
+			if (s[i] === '\\') { i += 2; continue }
+			if (s[i] === q) { i++; break }
+			i++
+		}
+
+		return i
+	}
+
+	if (c === '[') return findBalancedValueEnd(s, i, '[', ']')
+	if (c === '{') return findBalancedValueEnd(s, i, '{', '}')
+
+	// Scalar: stop at comma, closing bracket, or newline
+	while (i < s.length && s[i] !== ',' && s[i] !== '}' && s[i] !== ']' && s[i] !== '\n') {
+		i++
+	}
+
+	return i
+}
+
+function parseThirdPartyInto(rawValue: string, tp: Record<string, number>): void {
+	if (!rawValue.startsWith('{')) {
+		return
+	}
+
+	const inner = rawValue.slice(1, rawValue.lastIndexOf('}')).trim()
+	let i = 0
+
+	while (i < inner.length) {
+		while (i < inner.length && /[\s,]/.test(inner[i])) {
+			i++
+		}
+
+		if (i >= inner.length) {
+			break
+		}
+
+		// Read key
+		let key: string
+
+		if (inner[i] === '"' || inner[i] === "'") {
+			const q = inner[i++]
+			const ks = i
+
+			while (i < inner.length && inner[i] !== q) {
+				i++
+			}
+
+			key = inner.slice(ks, i++)
+		} else {
+			const ks = i
+
+			while (i < inner.length && /[a-zA-Z0-9_]/.test(inner[i])) {
+				i++
+			}
+
+			key = inner.slice(ks, i)
+		}
+
+		if (!key) {
+			i++
+			continue
+		}
+
+		// Skip whitespace + colon
+		while (i < inner.length && /[\s:]/.test(inner[i])) {
+			i++
+		}
+
+		// Read integer (thirdParty IDs are always positive integers)
+		const ns = i
+
+		if (inner[i] === '-') i++
+
+		while (i < inner.length && /[0-9]/.test(inner[i])) {
+			i++
+		}
+
+		const numStr = inner.slice(ns, i)
+
+		if (key && numStr) {
+			tp[key] = Number(numStr)
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -281,10 +737,7 @@ function findPropRange(source: string, propName: string): { start: number; end: 
 					end++
 				}
 
-				return {
-					start: propStart,
-					end,
-				}
+				return { start: propStart, end }
 			}
 		}
 
@@ -313,10 +766,7 @@ function findCardObjectRange(source: string): { open: number; close: number } | 
 		return null
 	}
 
-	return {
-		open,
-		close,
-	}
+	return { open, close }
 }
 
 function findBalancedValueEnd(
@@ -360,6 +810,14 @@ function findBalancedValueEnd(
 	return -1
 }
 
+/**
+ * Removes the top-level `thirdParty` property from the card object.
+ *
+ * Safety: `findPropRange` only matches properties at depth 1 of the card object.
+ * The `thirdParty` entries nested inside individual variants sit at depth 3+
+ * (card object → variants array → variant object → thirdParty) and are never
+ * reached by this scan.
+ */
 function removeTopLevelThirdParty(source: string): string {
 	const range = findPropRange(source, 'thirdParty')
 
@@ -370,9 +828,7 @@ function removeTopLevelThirdParty(source: string): string {
 	let start = range.start
 	let end = range.end
 
-	/**
-	 * Trim surrounding blank lines neatly.
-	 */
+	// Trim surrounding blank lines neatly.
 	while (source[start - 1] === '\n' && source[start - 2] === '\n') {
 		start--
 	}
@@ -385,405 +841,52 @@ function removeTopLevelThirdParty(source: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Parse existing detailed variants array into structured data
+// CardMarket helpers
 // ---------------------------------------------------------------------------
 
-function parseVariantsArray(propText: string): ParsedVariant[] {
-	// Strip trailing comma that findPropRange includes in its range —
-	// "const __v = [...],  " is invalid syntax and will throw Unexpected token.
-	const arrayText = propText.replace(/^variants\s*:\s*/, '').trimEnd().replace(/,$/, '')
-	const wrapper = `const __v = ${arrayText}`
-	const root = j(wrapper)
-
-	const variants: ParsedVariant[] = []
-
-	root.find(j.VariableDeclarator).forEach((p) => {
-		const init = p.node.init as BNode
-
-		if (init.type !== 'ArrayExpression') {
-			return
-		}
-
-		for (const el of init.elements as BNode[]) {
-			if (!el || el.type !== 'ObjectExpression') {
-				continue
-			}
-
-			const variant: ParsedVariant = {
-				fields: [],
-				thirdParty: {},
-			}
-
-			for (const prop of el.properties as BNode[]) {
-				const name: string = prop.key?.name ?? prop.key?.value ?? ''
-
-				if (!name) {
-					continue
-				}
-
-				if (name === 'thirdParty') {
-					for (const tp of (prop.value?.properties ?? []) as BNode[]) {
-						const key: string = tp.key?.name ?? tp.key?.value ?? ''
-						const value = tp.value?.value
-
-						if (key && typeof value === 'number') {
-							variant.thirdParty[key] = value
-						}
-					}
-				} else {
-					variant.fields.push({
-						name,
-						rawValue: rawValueOf(prop.value),
-					})
-				}
-			}
-
-			variants.push(variant)
-		}
-	})
-
-	return variants
-}
-
-function rawValueOf(node: BNode): string {
-	if (!node) {
-		return 'undefined'
+function getCardmarketIdForVariantKey(
+	cardmarketReview: CardmarketCardReview | undefined,
+	key: string,
+): number | undefined {
+	if (!cardmarketReview) {
+		return undefined
 	}
 
-	switch (node.type) {
-		case 'StringLiteral':
-			return `'${node.value}'`
-
-		case 'NumericLiteral':
-			return String(node.value)
-
-		case 'BooleanLiteral':
-			return String(node.value)
-
-		case 'NullLiteral':
-			return 'null'
-
-		case 'ArrayExpression':
-			return `[${(node.elements as BNode[]).map(rawValueOf).join(', ')}]`
-
-		case 'ObjectExpression': {
-			const pairs = (node.properties as BNode[]).map((p) => {
-				const key = p.key?.name ?? p.key?.value
-
-				return `${key}: ${rawValueOf(p.value)}`
-			})
-
-			return `{ ${pairs.join(', ')} }`
-		}
-
-		default:
-			return 'undefined'
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Render helpers
-// ---------------------------------------------------------------------------
-
-function renderVariantsBlock(
-	variants: ParsedVariant[],
-	products: TCGTrackingProduct[],
-	baseIndent: string,
-	cardmarketReview?: CardmarketCardReview,
-): string {
-	const productsByVariantKey = buildProductVariantMap(products)
-	const hasCardmarketReview = Boolean(cardmarketReview)
-
-	const i1 = baseIndent + '\t'
-	const i2 = i1 + '\t'
-	const i3 = i2 + '\t'
-
-	// Track existing variant keys so we don't duplicate when appending new ones.
-	const existingKeys = new Set<string>()
-
-	const elements = variants.map((variant) => {
-		const existingIdentity = resolveExistingVariant({
-			type: getStringField(variant, 'type') as CardVariantDetailed['type'],
-			foil: getStringField(variant, 'foil'),
-			stamp: getArrayField(variant, 'stamp'),
-			size: getStringField(variant, 'size'),
-		})
-
-		const key = existingIdentity ? variantKey(existingIdentity) : null
-
-		if (key) {
-			existingKeys.add(key)
-		}
-
-		const product =
-			key !== null
-				? productsByVariantKey.get(key)
-				: products.length === 1 && variants.length === 1
-					? products[0]
-					: undefined
-
-		const cardmarketId =
-			key !== null
-				? getCardmarketIdForVariantKey(cardmarketReview, key)
-				: undefined
-
-		const merged = mergeThirdParty(
-			variant.thirdParty,
-			product,
-			cardmarketId,
-			hasCardmarketReview,
-		)
-
-		const lines: string[] = variant.fields.map((field) => {
-			return `${i2}${field.name}: ${field.rawValue}`
-		})
-
-		if (Object.keys(merged).length > 0) {
-			const tpFields = orderedThirdPartyEntries(merged).map(([k, v]) => {
-				return `${i3}${k}: ${v}`
-			})
-
-			lines.push(`${i2}thirdParty: {\n${tpFields.join(',\n')}\n${i2}}`)
-		}
-
-		return `${i1}{\n${lines.join(',\n')}\n${i1}}`
-	})
-
-	/**
-	 * Append new special variants from manual CardMarket mappings that have no
-	 * existing counterpart in the file.
-	 *
-	 * Plain variants (type only) are merge-only — they must not create new entries.
-	 * Special variants (foil / stamp / size) create a new entry when missing.
-	 */
-	const newManualMatches = buildManualCardmarketMatches(cardmarketReview).filter(
-		(m) => !m.mergeOnly && !existingKeys.has(m.key),
-	)
-
-	for (const match of newManualMatches.sort(
-		(a, b) => variantSortValue(a.identity) - variantSortValue(b.identity),
-	)) {
-		const lines: string[] = []
-
-		lines.push(`${i2}type: '${match.identity.type}'`)
-
-		if (match.identity.foil) {
-			lines.push(`${i2}foil: '${match.identity.foil}'`)
-		}
-
-		if (match.identity.size) {
-			lines.push(`${i2}size: '${match.identity.size}'`)
-		}
-
-		if (match.identity.stamp && match.identity.stamp.length > 0) {
-			const stamps = match.identity.stamp.map((s) => `'${s}'`).join(', ')
-			lines.push(`${i2}stamp: [${stamps}]`)
-		}
-
-		const product = productsByVariantKey.get(match.key)
-		const tp = buildThirdPartyFields(product, i3, match.cardmarketId, hasCardmarketReview)
-
-		if (tp.length > 0) {
-			lines.push(`${i2}thirdParty: {\n${tp.join(',\n')}\n${i2}}`)
-		}
-
-		elements.push(`${i1}{\n${lines.join(',\n')}\n${i1}}`)
-	}
-
-	return `variants: [\n${elements.join(',\n')},\n${baseIndent}],`
-}
-
-function buildFreshVariantsBlock(
-	products: TCGTrackingProduct[],
-	baseIndent: string,
-	cardmarketReview?: CardmarketCardReview,
-): string {
-	const hasCardmarketReview = Boolean(cardmarketReview)
-
-	const i1 = baseIndent + '\t'
-	const i2 = i1 + '\t'
-	const i3 = i2 + '\t'
-
-	const mergedMatches = buildMergedVariantMatches(products, cardmarketReview)
-
-	const elements = mergedMatches.map((match) => {
-		const lines: string[] = []
-
-		lines.push(`${i2}type: '${match.identity.type}'`)
-
-		if (match.identity.foil) {
-			lines.push(`${i2}foil: '${match.identity.foil}'`)
-		}
-
-		if (match.identity.size) {
-			lines.push(`${i2}size: '${match.identity.size}'`)
-		}
-
-		if (match.identity.stamp && match.identity.stamp.length > 0) {
-			const stamps = match.identity.stamp.map((stamp) => `'${stamp}'`).join(', ')
-			lines.push(`${i2}stamp: [${stamps}]`)
-		}
-
-		const tp = buildThirdPartyFields(
-			match.product,
-			i3,
-			match.cardmarketId,
-			hasCardmarketReview,
-		)
-
-		if (tp.length > 0) {
-			lines.push(`${i2}thirdParty: {\n${tp.join(',\n')}\n${i2}}`)
-		}
-
-		return `${i1}{\n${lines.join(',\n')}\n${i1}}`
-	})
-
-	return `variants: [\n${elements.join(',\n')},\n${baseIndent}],`
-}
-
-interface MergedVariantMatch {
-	key: string
-	identity: VariantIdentity
-	product?: TCGTrackingProduct
-	cardmarketId?: number
-}
-
-function buildMergedVariantMatches(
-	products: TCGTrackingProduct[],
-	cardmarketReview?: CardmarketCardReview,
-): MergedVariantMatch[] {
-	const byKey = new Map<string, MergedVariantMatch>()
-
-	for (const match of products.flatMap(resolveProductVariants)) {
-		const key = variantKey(match.identity)
-
-		if (!byKey.has(key)) {
-			byKey.set(key, {
-				key,
-				identity: match.identity,
-				product: match.product,
-				cardmarketId: getCardmarketIdForVariantKey(cardmarketReview, key),
-			})
-		}
-	}
-
-	for (const manualMatch of buildManualCardmarketMatches(cardmarketReview)) {
-		const existing = byKey.get(manualMatch.key)
-
-		if (existing) {
-			existing.cardmarketId = manualMatch.cardmarketId
+	for (const product of cardmarketReview.products) {
+		if (!product.mapping) {
 			continue
 		}
 
-		/**
-		 * Plain variants (type only, no foil/stamp/size) must only merge into
-		 * an already-generated variant. They must not create a standalone entry.
-		 *
-		 * Special variants (has foil, stamp, or size) may create a new entry.
-		 */
-		if (!manualMatch.mergeOnly) {
-			byKey.set(manualMatch.key, {
-				key: manualMatch.key,
-				identity: manualMatch.identity,
-				product: undefined,
-				cardmarketId: manualMatch.cardmarketId,
-			})
+		const productKey = variantKey({
+			type: product.mapping.type,
+			foil: product.mapping.foil,
+			size: product.mapping.size,
+			stamp: product.mapping.stamp,
+		})
+
+		if (productKey === key) {
+			return product.productId
 		}
 	}
 
-	return Array.from(byKey.values()).sort((a, b) => {
-		return variantSortValue(a.identity) - variantSortValue(b.identity)
-	})
-}
-
-function buildProductVariantMap(products: TCGTrackingProduct[]): Map<string, TCGTrackingProduct> {
-	const map = new Map<string, TCGTrackingProduct>()
-
-	for (const product of products) {
-		for (const match of resolveProductVariants(product)) {
-			const key = variantKey(match.identity)
-
-			if (!map.has(key)) {
-				map.set(key, product)
-			}
-		}
-	}
-
-	return map
-}
-
-function mergeThirdParty(
-	existing: Record<string, number>,
-	product?: TCGTrackingProduct,
-	cardmarketId?: number,
 	/**
-	 * When true, product.cardmarket_id is never used as a fallback.
-	 * Manual CardMarket mappings are the sole source of truth.
-	 */
-	hasCardmarketReview = false,
-): Record<string, number> {
-	const merged = { ...existing }
-
-	if (typeof cardmarketId === 'number') {
-		merged.cardmarket = cardmarketId
-	} else if (!hasCardmarketReview && typeof product?.cardmarket_id === 'number') {
-		merged.cardmarket ??= product.cardmarket_id
-	}
-
-	if (product) {
-		merged.tcgplayer ??= product.id
-
-		if (typeof product.cardtrader_id === 'number') {
-			merged.cardtrader ??= product.cardtrader_id
-		}
-	}
-
-	return merged
-}
-
-function buildThirdPartyFields(
-	product: TCGTrackingProduct | undefined,
-	indent: string,
-	cardmarketId?: number,
-	/**
-	 * When true, product.cardmarket_id is never used as a fallback.
-	 */
-	hasCardmarketReview = false,
-): string[] {
-	const tp: Record<string, number> = {}
-
-	if (typeof cardmarketId === 'number') {
-		tp.cardmarket = cardmarketId
-	} else if (!hasCardmarketReview && typeof product?.cardmarket_id === 'number') {
-		tp.cardmarket = product.cardmarket_id
-	}
-
-	if (product) {
-		tp.tcgplayer = product.id
-
-		if (typeof product.cardtrader_id === 'number') {
-			tp.cardtrader = product.cardtrader_id
-		}
-	}
-
-	return orderedThirdPartyEntries(tp).map(([k, v]) => `${indent}${k}: ${v}`)
-}
-
-// ---------------------------------------------------------------------------
-// CardMarket manual mapping helpers
-// ---------------------------------------------------------------------------
-
-interface ManualCardmarketMatch extends MergedVariantMatch {
-	/**
-	 * When true this mapping can only merge into an existing generated variant.
-	 * It must not create a new standalone variant entry.
+	 * Reverse holos share the base CardMarket product listing with normal.
+	 * On CardMarket, normal and reverse are the same product — just different
+	 * conditions within it.
 	 *
-	 * Plain mappings (type only, no foil/stamp/size) are merge-only because
-	 * they represent common finishes that are always generated from TCGTracking
-	 * SKU data. Creating a duplicate plain entry would produce two variants of
-	 * the same type in the output.
+	 * Holo and other types are separate CardMarket products and must NOT fall
+	 * back to the base product ID.
 	 */
-	mergeOnly: boolean
+	if (key === 'type:reverse') {
+		return getBaseCardmarketId(cardmarketReview)
+	}
+
+	return undefined
+}
+
+/** Returns the CardMarket product ID for the base (auto-mapped) product, if any. */
+function getBaseCardmarketId(cardmarketReview: CardmarketCardReview): number | undefined {
+	return cardmarketReview.products.find((p) => p.bucket === 'base')?.productId
 }
 
 function buildManualCardmarketMatches(
@@ -823,57 +926,39 @@ function buildManualCardmarketMatches(
 	return matches
 }
 
-function getCardmarketIdForVariantKey(
-	cardmarketReview: CardmarketCardReview | undefined,
-	key: string,
-): number | undefined {
-	if (!cardmarketReview) {
-		return undefined
-	}
-
-	for (const product of cardmarketReview.products) {
-		if (!product.mapping) {
-			continue
-		}
-
-		const productKey = variantKey({
-			type: product.mapping.type,
-			foil: product.mapping.foil,
-			size: product.mapping.size,
-			stamp: product.mapping.stamp,
-		})
-
-		if (productKey === key) {
-			return product.productId
-		}
-	}
-
-	/**
-	 * Plain variants (type only, no foil/stamp/size) share the base CardMarket
-	 * product listing. On CardMarket, normal and reverse holos are the same
-	 * product — just different conditions within it.
-	 *
-	 * If a plain variant has no explicit mapping, fall back to the base product ID.
-	 */
-	if (isPlainVariantKey(key)) {
-		return getBaseCardmarketId(cardmarketReview)
-	}
-
-	return undefined
-}
+// ---------------------------------------------------------------------------
+// Third-party ID helpers
+// ---------------------------------------------------------------------------
 
 /**
- * Returns true if the key represents a plain variant — type only, no foil/stamp/size.
+ * Merges existing third-party IDs with new ones from a product + cardmarket mapping.
+ *
+ * When `hasCardmarketReview` is true, product.cardmarket_id is never used as
+ * a fallback — manual CardMarket mappings are the sole source of truth.
  */
-function isPlainVariantKey(key: string): boolean {
-	return /^type:[^|]+$/.test(key)
-}
+function mergeThirdPartyIds(
+	existing: Record<string, number>,
+	product?: TCGTrackingProduct,
+	cardmarketId?: number,
+	hasCardmarketReview = false,
+): Record<string, number> {
+	const merged = { ...existing }
 
-/**
- * Returns the CardMarket product ID for the base (auto-mapped) product, if any.
- */
-function getBaseCardmarketId(cardmarketReview: CardmarketCardReview): number | undefined {
-	return cardmarketReview.products.find((p) => p.bucket === 'base')?.productId
+	if (typeof cardmarketId === 'number') {
+		merged.cardmarket = cardmarketId
+	} else if (!hasCardmarketReview && typeof product?.cardmarket_id === 'number') {
+		merged.cardmarket ??= product.cardmarket_id
+	}
+
+	if (product) {
+		merged.tcgplayer ??= product.id
+
+		if (typeof product.cardtrader_id === 'number') {
+			merged.cardtrader ??= product.cardtrader_id
+		}
+	}
+
+	return merged
 }
 
 // ---------------------------------------------------------------------------
@@ -882,20 +967,66 @@ function getBaseCardmarketId(cardmarketReview: CardmarketCardReview): number | u
 
 const TP_CANONICAL_ORDER = ['cardmarket', 'tcgplayer', 'cardtrader']
 
-function orderedThirdPartyEntries(
-	tp: Record<string, number>,
-): Array<[string, number]> {
+function orderedThirdPartyEntries(tp: Record<string, number>): Array<[string, number]> {
 	return (Object.entries(tp) as Array<[string, number]>).sort(([a], [b]) => {
 		const ai = TP_CANONICAL_ORDER.indexOf(a)
 		const bi = TP_CANONICAL_ORDER.indexOf(b)
-
 		return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
 	})
 }
 
 // ---------------------------------------------------------------------------
-// Field helpers
+// Variant sort order
 // ---------------------------------------------------------------------------
+
+/**
+ * Canonical sort order: normal → holo → reverse → metal → lenticular.
+ *
+ * Special variants (foil/stamp/size) sort immediately after their base type
+ * so related variants stay grouped.
+ *
+ *   normal (100) → normal+special (150) →
+ *   holo (200)   → holo+special (250)   →
+ *   reverse (300) → reverse+special (350) → ...
+ */
+function variantSortValue(identity: VariantIdentity): number {
+	const isSpecial = Boolean(
+		identity.foil ||
+		(identity.stamp && identity.stamp.length > 0) ||
+		(identity.size && identity.size !== 'standard'),
+	)
+
+	const base = (() => {
+		switch (identity.type) {
+			case 'normal': return 100
+			case 'holo': return 200
+			case 'reverse': return 300
+			case 'metal': return 400
+			case 'lenticular': return 500
+			default: return 900
+		}
+	})()
+
+	return base + (isSpecial ? 50 : 0)
+}
+
+// ---------------------------------------------------------------------------
+// Shared utilities
+// ---------------------------------------------------------------------------
+
+function buildProductVariantMap(products: TCGTrackingProduct[]): Map<string, TCGTrackingProduct> {
+	const map = new Map<string, TCGTrackingProduct>()
+
+	for (const product of products) {
+		for (const match of resolveProductVariants(product)) {
+			if (!map.has(match.key)) {
+				map.set(match.key, product)
+			}
+		}
+	}
+
+	return map
+}
 
 function getStringField(variant: ParsedVariant, fieldName: string): string | undefined {
 	const field = variant.fields.find((entry) => entry.name === fieldName)
@@ -904,7 +1035,7 @@ function getStringField(variant: ParsedVariant, fieldName: string): string | und
 		return undefined
 	}
 
-	return field.rawValue.replace(/^['"]|['"]$/g, '')
+	return field.rawValue.replace(/^['"`]|['"`]$/g, '')
 }
 
 function getArrayField(variant: ParsedVariant, fieldName: string): string[] | undefined {
@@ -914,41 +1045,35 @@ function getArrayField(variant: ParsedVariant, fieldName: string): string[] | un
 		return undefined
 	}
 
-	const matches = Array.from(field.rawValue.matchAll(/['"]([^'"]+)['"]/g))
+	const matches = Array.from(field.rawValue.matchAll(/['"`]([^'"`]+)['"`]/g))
 
 	return matches.map((match) => match[1])
-}
-
-function variantSortValue(identity: VariantIdentity): number {
-	switch (identity.type) {
-		case 'normal':
-			return 10
-		case 'holo':
-			return 20
-		case 'reverse':
-			return 30
-		case 'metal':
-			return 40
-		case 'lenticular':
-			return 50
-		default:
-			return 99
-	}
 }
 
 function lineIndent(source: string, pos: number): string {
 	const lineStart = source.lastIndexOf('\n', pos - 1) + 1
 	const match = source.slice(lineStart, pos).match(/^(\s+)/)
-
 	return match ? match[1] : '\t'
 }
 
+function ensureNewlineAtEof(source: string): string {
+	return source.endsWith('\n') ? source : `${source}\n`
+}
+
+// ---------------------------------------------------------------------------
+// File I/O
+// ---------------------------------------------------------------------------
+
+export async function writeCardFile(filePath: string, source: string): Promise<void> {
+	await fs.writeFile(filePath, ensureNewlineAtEof(source), 'utf8')
+}
+
+// ---------------------------------------------------------------------------
+// Backwards-compatible export
+// ---------------------------------------------------------------------------
+
 /**
- * Kept for backwards compatibility with any existing imports.
- *
- * New code should use `resolveProductVariants()` from `variant-resolver.ts`,
- * because a product can now represent more than one useful variant depending
- * on SKU data.
+ * @deprecated Use resolveProductVariants from variant-resolver.ts instead.
  */
 export function normaliseFinish(product: TCGTrackingProduct): string | null {
 	const match = resolveProductVariants(product)[0]
@@ -970,12 +1095,4 @@ export function normaliseFinish(product: TCGTrackingProduct): string | null {
 	}
 
 	return match.identity.type
-}
-
-export async function writeCardFile(filePath: string, source: string): Promise<void> {
-	await fs.writeFile(filePath, ensureNewlineAtEof(source), 'utf8')
-}
-
-function ensureNewlineAtEof(source: string): string {
-	return source.endsWith('\n') ? source : `${source}\n`
 }

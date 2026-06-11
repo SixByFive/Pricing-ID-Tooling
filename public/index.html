@@ -786,6 +786,69 @@
     font-size: 11px;
   }
 
+  /* Variant diff table */
+  .variant-diff {
+    margin-bottom: 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .variant-diff-title {
+    padding: 5px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: var(--muted2);
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .variant-diff-row {
+    display: grid;
+    grid-template-columns: 14px 1fr auto;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .variant-diff-row:last-child { border-bottom: none; }
+
+  .variant-diff-row.action-add    { background: rgba(34,197,94,.07); }
+  .variant-diff-row.action-update { background: rgba(59,130,246,.07); }
+  .variant-diff-row.action-noop   { opacity: .55; }
+
+  .vd-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .action-add    .vd-dot { background: var(--success); }
+  .action-update .vd-dot { background: #3b82f6; }
+  .action-noop   .vd-dot { background: var(--muted2); }
+
+  .vd-key { font-family: monospace; color: var(--text); }
+
+  .vd-ids { display: flex; gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
+
+  .vd-id {
+    font-size: 11px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    color: var(--muted2);
+    white-space: nowrap;
+  }
+
+  .vd-id.new {
+    color: var(--text);
+    border-color: rgba(59,130,246,.4);
+    background: rgba(59,130,246,.08);
+  }
+
   .inline-warning {
     color: var(--warning);
     font-size: 12px;
@@ -1297,11 +1360,53 @@
     }
   }
 
+  function renderVariantDiff(changes) {
+    if (!changes || changes.length === 0) return ''
+
+    const addCount    = changes.filter(c => c.action === 'add').length
+    const updateCount = changes.filter(c => c.action === 'update').length
+    const noopCount   = changes.filter(c => c.action === 'noop').length
+
+    const summaryParts = []
+    if (addCount)    summaryParts.push(`+${addCount} new`)
+    if (updateCount) summaryParts.push(`~${updateCount} update`)
+    if (noopCount)   summaryParts.push(`${noopCount} complete`)
+
+    const rows = changes.map(c => {
+      const TP_ORDER = ['cardmarket', 'tcgplayer', 'cardtrader']
+      const sortedIds = Object.entries(c.idsNew).sort(([a], [b]) => {
+        return (TP_ORDER.indexOf(a) + 1 || 99) - (TP_ORDER.indexOf(b) + 1 || 99)
+      })
+
+      const idTags = sortedIds.map(([k, v]) => {
+        const isNew = c.idsAdded[k] !== undefined
+        return `<span class="vd-id${isNew ? ' new' : ''}">${escapeHtml(k)}: ${v}</span>`
+      }).join('')
+
+      return `
+        <div class="variant-diff-row action-${c.action}">
+          <span class="vd-dot"></span>
+          <span class="vd-key">${escapeHtml(c.key)}</span>
+          <span class="vd-ids">${idTags}</span>
+        </div>`
+    }).join('')
+
+    return `
+      <div class="variant-diff">
+        <div class="variant-diff-title">Variants · ${summaryParts.join(' · ')}</div>
+        ${rows}
+      </div>`
+  }
+
   function renderMatchedCard(match) {
     const file = filename(match.cardFile)
     const productCount = match.products?.length ?? 0
     const skuCount = countProductsSkus(match.products ?? [])
     const needsCardmarketMapping = Boolean(match.cardmarketReview?.needsMapping)
+
+    const changes = match.variantChanges ?? []
+    const addCount    = changes.filter(c => c.action === 'add').length
+    const updateCount = changes.filter(c => c.action === 'update').length
 
     const reviewTag = needsCardmarketMapping
       ? '<span class="tag danger">needs CM mapping</span>'
@@ -1309,12 +1414,21 @@
         ? '<span class="tag review">review</span>'
         : '<span class="tag ok">safe</span>'
 
+    const diffTag = addCount || updateCount
+      ? `<span class="tag" style="color:#3b82f6;border-color:rgba(59,130,246,.35)">
+           ${addCount ? `+${addCount}` : ''}${addCount && updateCount ? ' ' : ''}${updateCount ? `~${updateCount}` : ''}
+         </span>`
+      : changes.length > 0
+        ? '<span class="tag" style="color:var(--muted2)">complete</span>'
+        : ''
+
     return `
       <details data-cm-needs-mapping="${needsCardmarketMapping}">
         <summary>
           <span class="card-title">${escapeHtml(file)}</span>
           <span class="card-meta">
             ${reviewTag}
+            ${diffTag}
             <span class="tag">${escapeHtml(match.matchMethod)}</span>
             <span class="tag">${productCount} products</span>
             <span class="tag">${skuCount} SKUs</span>
@@ -1327,6 +1441,7 @@
         </summary>
 
         <div class="details-body">
+          ${renderVariantDiff(match.variantChanges)}
           ${renderCardmarketEditor(match.cardmarketReview)}
 
           <div class="product-list">
