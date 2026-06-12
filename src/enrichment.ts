@@ -14,6 +14,7 @@ import { matchProductsToCards } from './matcher'
 import {
 	buildVariants,
 	computeVariantDiff,
+	ensureVariantsLast,
 	fillMissingCardtraderIds,
 	hasVariants,
 	writeCardFile,
@@ -255,13 +256,15 @@ export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport>
 				continue
 			}
 
-			const newSource = fillMode
+			const builtSource = fillMode
 				? fillMissingCardtraderIds(source, match.products)
 				: buildVariants(source, match.products, {
 						cardmarketReview: match.cardmarketReview,
 					})
 
-			const normalisedNewSource = ensureNewlineAtEof(newSource)
+			const normalisedNewSource = ensureNewlineAtEof(
+				ensureVariantsLast(builtSource),
+			)
 
 			if (normalisedNewSource === ensureNewlineAtEof(source)) {
 				skipped++

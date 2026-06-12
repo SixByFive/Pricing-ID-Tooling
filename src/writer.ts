@@ -111,6 +111,7 @@ export function buildVariants(
 		source.slice(variantsRange.end)
 
 	nextSource = removeTopLevelThirdParty(nextSource)
+	nextSource = ensureVariantsLast(nextSource)
 
 	return nextSource === source ? source : nextSource
 }
@@ -342,9 +343,42 @@ function assembleVariantEntries(
 		}
 	}
 
-	// ── Both modes: append new special CM variants not yet covered ────────────
+	// ── Both modes: apply CM manual mappings ─────────────────────────────────
 	for (const manualMatch of buildManualCardmarketMatches(cardmarketReview)) {
-		if (manualMatch.mergeOnly || coveredKeys.has(manualMatch.key)) {
+		if (coveredKeys.has(manualMatch.key)) {
+			continue
+		}
+
+		if (manualMatch.mergeOnly) {
+			// Plain variants are merge-only: they cannot be created from scratch because
+			// TCGTracking is the authoritative source for plain variant existence.
+			// However, if an existing entry holds this CM product ID under the WRONG type
+			// (e.g. type:normal written previously but user has now mapped it to type:holo),
+			// replace that entry fresh so the type corrects itself.
+			const conflictIdx = entries.findIndex((e) => {
+				const cmId =
+					e.cardmarketId ??
+					e.existingThirdParty.cardmarket ??
+					(typeof e.product?.cardmarket_id === 'number' ? e.product.cardmarket_id : undefined)
+				return (
+					typeof cmId === 'number' &&
+					cmId === manualMatch.cardmarketId &&
+					variantKey(e.identity) !== manualMatch.key
+				)
+			})
+
+			if (conflictIdx !== -1) {
+				const old = entries[conflictIdx]
+				coveredKeys.delete(variantKey(old.identity))
+				// Rebuild without existingFields so the type renders from the corrected identity
+				entries[conflictIdx] = {
+					identity: manualMatch.identity,
+					existingThirdParty: old.existingThirdParty,
+					product: old.product ?? productsByVariantKey.get(manualMatch.key),
+					cardmarketId: manualMatch.cardmarketId,
+				}
+				coveredKeys.add(manualMatch.key)
+			}
 			continue
 		}
 
@@ -712,19 +746,32 @@ function findPropRange(source: string, propName: string): { start: number; end: 
 				}
 
 				const valueOpen = source[valueStart]
-				const valueClose =
-					valueOpen === '{' ? '}'
-						: valueOpen === '[' ? ']'
-							: null
 
-				if (!valueClose) {
-					return null
-				}
+				let valueEnd: number
 
-				const valueEnd = findBalancedValueEnd(source, valueStart, valueOpen, valueClose)
-
-				if (valueEnd === -1) {
-					return null
+				if (valueOpen === '{' || valueOpen === '[') {
+					const valueClose = valueOpen === '{' ? '}' : ']'
+					valueEnd = findBalancedValueEnd(source, valueStart, valueOpen, valueClose)
+					if (valueEnd === -1) return null
+				} else if (valueOpen === '"' || valueOpen === "'" || valueOpen === '`') {
+					valueEnd = valueStart + 1
+					while (valueEnd < source.length) {
+						const ch = source[valueEnd]
+						if (ch === '\\') { valueEnd += 2; continue }
+						if (ch === valueOpen) { valueEnd++; break }
+						valueEnd++
+					}
+				} else {
+					// Scalar (number, boolean, null) — read until comma, newline, or closing bracket
+					valueEnd = valueStart
+					while (valueEnd < source.length) {
+						const ch = source[valueEnd]
+						if (ch === ',' || ch === '\n' || ch === '}' || ch === ']') break
+						valueEnd++
+					}
+					while (valueEnd > valueStart && (source[valueEnd - 1] === ' ' || source[valueEnd - 1] === '\t')) {
+						valueEnd--
+					}
 				}
 
 				let end = valueEnd
@@ -818,6 +865,56 @@ function findBalancedValueEnd(
  * (card object → variants array → variant object → thirdParty) and are never
  * reached by this scan.
  */
+export function ensureVariantsLast(source: string): string {
+	const variantsRange = findPropRange(source, 'variants')
+	if (!variantsRange) return source
+
+	const objectRange = findCardObjectRange(source)
+	if (!objectRange) return source
+
+	// Extract the full variants line (leading indent through trailing newline)
+	let blockStart = variantsRange.start
+	while (blockStart > 0 && source[blockStart - 1] !== '\n') {
+		blockStart--
+	}
+
+	let blockEnd = variantsRange.end
+	if (source[blockEnd] === '\n') blockEnd++
+
+	const variantsBlock = source.slice(blockStart, blockEnd)
+	let withoutVariants = source.slice(0, blockStart) + source.slice(blockEnd)
+
+	// Find insertion point: start of the closing brace line
+	const newClose = objectRange.close - (blockEnd - blockStart)
+	let insertPos = newClose
+	while (insertPos > 0 && withoutVariants[insertPos - 1] !== '\n') {
+		insertPos--
+	}
+
+	// Ensure the property before the insertion point ends with a comma
+	let lastNonWs = insertPos - 1
+	while (lastNonWs >= 0 && /\s/.test(withoutVariants[lastNonWs])) {
+		lastNonWs--
+	}
+	if (lastNonWs >= 0 && withoutVariants[lastNonWs] !== ',') {
+		withoutVariants =
+			withoutVariants.slice(0, lastNonWs + 1) + ',' + withoutVariants.slice(lastNonWs + 1)
+		insertPos++
+	}
+
+	// Ensure a blank line between the last property and variants
+	const hasBlankLine =
+		withoutVariants[insertPos - 1] === '\n' &&
+		insertPos >= 2 &&
+		withoutVariants[insertPos - 2] === '\n'
+	const gap = hasBlankLine ? '' : '\n'
+
+	const result =
+		withoutVariants.slice(0, insertPos) + gap + variantsBlock + withoutVariants.slice(insertPos)
+
+	return result === source ? source : result
+}
+
 function removeTopLevelThirdParty(source: string): string {
 	const range = findPropRange(source, 'thirdParty')
 
@@ -952,10 +1049,6 @@ function mergeThirdPartyIds(
 
 	if (product) {
 		merged.tcgplayer ??= product.id
-
-		if (typeof product.cardtrader_id === 'number') {
-			merged.cardtrader ??= product.cardtrader_id
-		}
 	}
 
 	return merged

@@ -52,6 +52,29 @@ Bun.serve({
 			}
 
 			// -----------------------------------------------------------------
+			// API: upload a local JSON file
+			// -----------------------------------------------------------------
+			// POST /api/upload  (multipart/form-data, field: file)
+			// Saves the file to var/uploads/ and returns its absolute path.
+
+			if (url.pathname === '/api/upload' && req.method === 'POST') {
+				const form = await req.formData()
+				const file = form.get('file')
+
+				if (!file || !(file instanceof File)) {
+					return json({ error: 'file field is required' }, 400)
+				}
+
+				const uploadsDir = path.join(process.cwd(), 'var', 'uploads')
+				await fs.mkdir(uploadsDir, { recursive: true })
+
+				const destPath = path.join(uploadsDir, file.name)
+				await Bun.write(destPath, file)
+
+				return json({ path: destPath })
+			}
+
+			// -----------------------------------------------------------------
 			// API: run enrichment
 			// -----------------------------------------------------------------
 			// POST /api/run
