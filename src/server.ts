@@ -89,6 +89,8 @@ Bun.serve({
 					cardmarketJson?: string
 					cardmarketMap?: string
 					fillMissingCardtrader?: boolean
+					tcgplayerSetId?: number
+					tcgplayerJson?: string
 				}>(req)
 
 				if (!body.ok) {
@@ -101,6 +103,9 @@ Bun.serve({
 				const cardmarketJson = body.data.cardmarketJson?.trim() || undefined
 				const cardmarketMap = body.data.cardmarketMap?.trim() || undefined
 				const fillMissingCardtrader = body.data.fillMissingCardtrader ?? false
+				const tcgplayerSetId =
+					typeof body.data.tcgplayerSetId === 'number' ? body.data.tcgplayerSetId : undefined
+				const tcgplayerJson = body.data.tcgplayerJson?.trim() || undefined
 
 				if (!repo || !set) {
 					return json({ error: 'repo and set are required' }, 400)
@@ -133,6 +138,8 @@ Bun.serve({
 								cardmarketJson,
 								cardmarketMap,
 								fillMissingCardtrader,
+								tcgplayerSetId,
+								tcgplayerJson,
 								log: sendLine,
 							})
 

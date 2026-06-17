@@ -197,6 +197,18 @@ function resolveSkuVariants(product: TCGTrackingProduct): ProductVariantMatch[] 
 			continue
 		}
 
+		// When the SKU var resolved the type (e.g. "Holofoil") but gave no
+		// stamp, supplement from the product name — this handles cases like
+		// "Meganium - 001 [Staff]" where the stamp only appears in the name.
+		let resolvedIdentity = identity
+		if (!resolvedIdentity.stamp?.length) {
+			const nameText = normaliseSearchText([product.name, product.clean_name])
+			const nameStamps = resolveStamps(nameText)
+			if (nameStamps.length > 0) {
+				resolvedIdentity = { ...resolvedIdentity, stamp: nameStamps }
+			}
+		}
+
 		/**
 		 * SKU data includes condition/language duplicates.
 		 *
@@ -207,8 +219,8 @@ function resolveSkuVariants(product: TCGTrackingProduct): ProductVariantMatch[] 
 		 * They are the same TCGDex variant, so later dedupe by variant key.
 		 */
 		matches.push({
-			key: variantKey(identity),
-			identity,
+			key: variantKey(resolvedIdentity),
+			identity: resolvedIdentity,
 			product,
 			skuId,
 			sku,

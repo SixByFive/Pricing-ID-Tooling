@@ -149,6 +149,27 @@
     color: var(--text);
   }
 
+  .btn-clear {
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    color: var(--muted2);
+    padding: 4px 6px;
+    font-size: 15px;
+    cursor: pointer;
+    line-height: 1;
+    border-radius: 4px;
+    transition: color 0.15s;
+  }
+
+  .btn-clear:hover {
+    color: var(--text);
+  }
+
+  .btn-clear[hidden] {
+    display: none;
+  }
+
   .search-wrap {
     position: relative;
   }
@@ -960,6 +981,7 @@
       <label>CardMarket merge JSON</label>
       <div class="file-pick-wrap">
         <input type="text" id="cardmarket-json-input" placeholder="No file chosen" spellcheck="false" readonly>
+        <button class="btn-clear" type="button" id="cardmarket-json-clear" title="Clear" hidden>&#xD7;</button>
         <button class="btn-browse" type="button" title="Choose file" onclick="document.getElementById('cardmarket-json-file').click()">&#128193;</button>
         <input type="file" id="cardmarket-json-file" accept=".json" style="display:none">
       </div>
@@ -969,9 +991,25 @@
       <label>CardMarket manual map</label>
       <div class="file-pick-wrap">
         <input type="text" id="cardmarket-map-input" placeholder="Auto (beside merge JSON)" spellcheck="false" readonly>
+        <button class="btn-clear" type="button" id="cardmarket-map-clear" title="Clear" hidden>&#xD7;</button>
         <button class="btn-browse" type="button" title="Choose file" onclick="document.getElementById('cardmarket-map-file').click()">&#128193;</button>
         <input type="file" id="cardmarket-map-file" accept=".json" style="display:none">
       </div>
+    </div>
+
+    <div class="sidebar-section">
+      <label>TCGPlayer set JSON <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted2)">(optional)</span></label>
+      <div class="file-pick-wrap">
+        <input type="text" id="tcgplayer-json-input" placeholder="No file chosen" spellcheck="false" readonly>
+        <button class="btn-clear" type="button" id="tcgplayer-json-clear" title="Clear" hidden>&#xD7;</button>
+        <button class="btn-browse" type="button" title="Choose file" onclick="document.getElementById('tcgplayer-json-file').click()">&#128193;</button>
+        <input type="file" id="tcgplayer-json-file" accept=".json" style="display:none">
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <label>TCGPlayer set ID <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted2)">(override)</span></label>
+      <input type="number" id="tcgplayer-set-id-input" placeholder="e.g. 24655" spellcheck="false" min="1" step="1">
     </div>
 
     <div class="sidebar-section">
@@ -1007,8 +1045,6 @@
 
 <script>
   const repoInput = document.getElementById('repo-input')
-  const cardmarketJsonInput = document.getElementById('cardmarket-json-input')
-  const cardmarketMapInput = document.getElementById('cardmarket-map-input')
   const setSearch = document.getElementById('set-search')
   const setList = document.getElementById('set-list')
   const selectedLabel = document.getElementById('selected-label')
@@ -1027,43 +1063,55 @@
   let mappingsChangedSinceLastRun = false
 
   const savedRepo = localStorage.getItem('repo') ?? ''
-  const savedCardmarketJson = localStorage.getItem('cardmarketJson') ?? ''
-  const savedCardmarketMap = localStorage.getItem('cardmarketMap') ?? ''
 
   if (savedRepo) {
     repoInput.value = savedRepo
     loadSets(savedRepo)
   }
 
-  if (savedCardmarketJson) {
-    cardmarketJsonInput.value = savedCardmarketJson
-  }
+  function bindFilePicker(inputId, fileId, clearId, storageKey) {
+    const inputEl = document.getElementById(inputId)
+    const fileEl = document.getElementById(fileId)
+    const clearEl = document.getElementById(clearId)
 
-  if (savedCardmarketMap) {
-    cardmarketMapInput.value = savedCardmarketMap
-  }
-
-  async function uploadFile(file, inputEl, storageKey) {
-    const form = new FormData()
-    form.append('file', file)
-    try {
-      const res = await fetch('/api/upload', { method: 'POST', body: form })
-      if (!res.ok) throw new Error(await res.text())
-      const { path } = await res.json()
-      inputEl.value = path
-      localStorage.setItem(storageKey, path)
-    } catch (err) {
-      alert(`Upload failed: ${err.message}`)
+    const saved = localStorage.getItem(storageKey) ?? ''
+    if (saved) {
+      inputEl.value = saved
+      clearEl.hidden = false
     }
+
+    async function upload(file) {
+      const form = new FormData()
+      form.append('file', file)
+      try {
+        const res = await fetch('/api/upload', { method: 'POST', body: form })
+        if (!res.ok) throw new Error(await res.text())
+        const { path } = await res.json()
+        inputEl.value = path
+        localStorage.setItem(storageKey, path)
+        clearEl.hidden = false
+      } catch (err) {
+        alert(`Upload failed: ${err.message}`)
+      }
+    }
+
+    fileEl.addEventListener('change', function() {
+      if (this.files[0]) upload(this.files[0])
+    })
+
+    clearEl.addEventListener('click', () => {
+      inputEl.value = ''
+      fileEl.value = ''
+      localStorage.removeItem(storageKey)
+      clearEl.hidden = true
+    })
+
+    return inputEl
   }
 
-  document.getElementById('cardmarket-json-file').addEventListener('change', function() {
-    if (this.files[0]) uploadFile(this.files[0], cardmarketJsonInput, 'cardmarketJson')
-  })
-
-  document.getElementById('cardmarket-map-file').addEventListener('change', function() {
-    if (this.files[0]) uploadFile(this.files[0], cardmarketMapInput, 'cardmarketMap')
-  })
+  const cardmarketJsonInput = bindFilePicker('cardmarket-json-input', 'cardmarket-json-file', 'cardmarket-json-clear', 'cardmarketJson')
+  const cardmarketMapInput = bindFilePicker('cardmarket-map-input', 'cardmarket-map-file', 'cardmarket-map-clear', 'cardmarketMap')
+  const tcgplayerJsonInput = bindFilePicker('tcgplayer-json-input', 'tcgplayer-json-file', 'tcgplayer-json-clear', 'tcgplayerJson')
 
   let repoTimer
 
@@ -1235,6 +1283,8 @@
           cardmarketJson: cardmarketJsonInput.value.trim() || undefined,
           cardmarketMap: cardmarketMapInput.value.trim() || undefined,
           fillMissingCardtrader: fillMissingCardtrader || undefined,
+          tcgplayerSetId: parseInt(document.getElementById('tcgplayer-set-id-input').value) || undefined,
+          tcgplayerJson: tcgplayerJsonInput.value.trim() || undefined,
         }),
       })
 
@@ -1855,6 +1905,7 @@
       if (data.mappingPath && !cardmarketMapInput.value.trim()) {
         cardmarketMapInput.value = data.mappingPath
         localStorage.setItem('cardmarketMap', data.mappingPath)
+        document.getElementById('cardmarket-map-clear').hidden = false
       }
 
       mappingsChangedSinceLastRun = true
@@ -1995,6 +2046,7 @@
       if (data.mappingPath && !cardmarketMapInput.value.trim()) {
         cardmarketMapInput.value = data.mappingPath
         localStorage.setItem('cardmarketMap', data.mappingPath)
+        document.getElementById('cardmarket-map-clear').hidden = false
       }
 
       mappingsChangedSinceLastRun = true

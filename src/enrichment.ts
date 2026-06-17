@@ -10,6 +10,7 @@ import {
 	type CardmarketMergeContext,
 } from './cardmarket-merge'
 import { fetchSetProducts, fetchSetSkus, CATEGORIES, type CategoryId } from './tcgtracking'
+import type { TCGTrackingSetResponse } from './types'
 import { matchProductsToCards } from './matcher'
 import {
 	buildVariants,
@@ -63,6 +64,21 @@ export interface RunOptions {
 	 * - Never overwrites existing cardmarket, tcgplayer, or cardtrader
 	 */
 	fillMissingCardtrader?: boolean
+
+	/**
+	 * Manual override for the TCGPlayer set ID.
+	 *
+	 * Used when the set file in the repo doesn't yet have a thirdParty.tcgplayer value.
+	 */
+	tcgplayerSetId?: number
+
+	/**
+	 * Path to a local TCGTracking set JSON file.
+	 *
+	 * When provided, products are loaded from the file instead of fetched from the API.
+	 * The set_id is extracted from the file and used as the TCGPlayer set ID.
+	 */
+	tcgplayerJson?: string
 }
 
 export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport> {
@@ -95,11 +111,35 @@ export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport>
 		`${setParts.at(-1)}.ts`,
 	)
 
-	const setFile = await importTs<{ thirdParty?: { tcgplayer?: number } }>(setFilePath)
-	const tcgplayerSetId = setFile?.thirdParty?.tcgplayer
+	// Load the local TCGTracking JSON if provided — it supplies both set_id and products.
+	let localSetResponse: TCGTrackingSetResponse | undefined
+	if (opts.tcgplayerJson) {
+		const raw = await fs.readFile(opts.tcgplayerJson, 'utf8')
+		const parsed = JSON.parse(raw)
+		if (parsed && Array.isArray(parsed.products)) {
+			// Raw TCGTracking API shape: { set_id, products: [...] }
+			localSetResponse = parsed as TCGTrackingSetResponse
+		} else if (parsed && parsed.byCardId && typeof parsed.byCardId === 'object') {
+			// Custom sbf-tcgplayer-set-exporter shape: { meta: { groupId }, byCardId: { ... } }
+			localSetResponse = parseTcgplayerExport(parsed)
+		} else if (parsed && parsed.meta?.tool === 'pricing-id-tooling') {
+			throw new Error(
+				`The file in the 'TCGPlayer JSON' field is a CardMarket map file, not a TCGPlayer export. Please clear the TCGPlayer JSON field in the UI: ${opts.tcgplayerJson}`,
+			)
+		} else {
+			throw new Error(
+				`TCGPlayer JSON is not a recognised format. Expected either a TCGTracking API response ({ set_id, products: [...] }) or a sbf-tcgplayer-set-exporter file ({ meta, byCardId: {...} }): ${opts.tcgplayerJson}`,
+			)
+		}
+		log(`TCGPlayer JSON: ${path.resolve(opts.tcgplayerJson)} (${localSetResponse.products.length} products)`)
+	}
 
-	if (typeof tcgplayerSetId !== 'number') {
-		throw new Error(`Set file has no thirdParty.tcgplayer: ${setFilePath}`)
+	const setFile = await importTs<{ thirdParty?: { tcgplayer?: number } }>(setFilePath)
+	const tcgplayerSetId =
+		opts.tcgplayerSetId ?? localSetResponse?.set_id ?? setFile?.thirdParty?.tcgplayer
+
+	if (opts.tcgplayerSetId && setFile?.thirdParty?.tcgplayer !== opts.tcgplayerSetId) {
+		log(`TCGPlayer set ID: ${opts.tcgplayerSetId} (manual override)`)
 	}
 
 	const categoryId: CategoryId = setRelPath.startsWith('data-asia')
@@ -123,26 +163,60 @@ export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport>
 		log('')
 	}
 
+	// When no TCGPlayer set ID is available, fall back to CardMarket-only mode if we have
+	// CM context. Without a set ID we cannot fetch products, so only CM IDs are written.
+	const cardmarketOnlyMode = typeof tcgplayerSetId !== 'number'
+
+	if (cardmarketOnlyMode) {
+		if (!cardmarketContext) {
+			throw new Error(
+				`Set file has no thirdParty.tcgplayer and no CardMarket context is available. ` +
+				`Provide a TCGPlayer set ID, a TCGPlayer JSON file, or a CardMarket export: ${setFilePath}`,
+			)
+		}
+		log('No TCGPlayer set ID — running in CardMarket-only mode (CardMarket IDs will be written, TCGPlayer IDs skipped)')
+		log('')
+	}
+
 	const cardmarketSetCode = cardmarketContext
 		? inferSetCodeFromCardmarketExport(cardmarketContext)
 		: ''
 
-	// 3. Fetch TCGTracking products and SKU variation data.
-	log(`Fetching TCGTracking products for set ${tcgplayerSetId}...`)
+	// 3. Load TCGTracking products and SKU variation data.
+	let products: TCGTrackingProduct[]
 
-	const [setResponse, skuResponse] = await Promise.all([
-		fetchSetProducts(categoryId, tcgplayerSetId),
-		fetchSetSkus(categoryId, tcgplayerSetId),
-	])
+	if (cardmarketOnlyMode) {
+		products = []
+	} else if (localSetResponse) {
+		// Products came from the local JSON — check whether SKUs are already embedded.
+		const hasSkus = localSetResponse.products.some((p: TCGTrackingProduct) => p.skus && Object.keys(p.skus).length > 0)
 
-	const products = attachSkusToProducts(setResponse.products, skuResponse?.products)
-
-	log(`Found ${products.length} products`)
-
-	if (skuResponse) {
-		log(`Found ${skuResponse.sku_count ?? countSkus(skuResponse.products)} SKU variations`)
+		if (hasSkus) {
+			log(`Loaded ${localSetResponse.products.length} products with embedded SKUs from file`)
+			products = localSetResponse.products
+		} else {
+			log(`Loaded ${localSetResponse.products.length} products from file — fetching SKUs from API...`)
+			const skuResponse = await fetchSetSkus(categoryId, tcgplayerSetId!)
+			products = attachSkusToProducts(localSetResponse.products, skuResponse?.products)
+			if (skuResponse) {
+				log(`Found ${skuResponse.sku_count ?? countSkus(skuResponse.products)} SKU variations`)
+			} else {
+				log('No SKU variation data found; falling back to product names/CardTrader finishes')
+			}
+		}
 	} else {
-		log('No SKU variation data found; falling back to product names/CardTrader finishes')
+		log(`Fetching TCGTracking products for set ${tcgplayerSetId}...`)
+		const [setResponse, skuResponse] = await Promise.all([
+			fetchSetProducts(categoryId, tcgplayerSetId!),
+			fetchSetSkus(categoryId, tcgplayerSetId!),
+		])
+		products = attachSkusToProducts(setResponse.products, skuResponse?.products)
+		log(`Found ${products.length} products`)
+		if (skuResponse) {
+			log(`Found ${skuResponse.sku_count ?? countSkus(skuResponse.products)} SKU variations`)
+		} else {
+			log('No SKU variation data found; falling back to product names/CardTrader finishes')
+		}
 	}
 
 	// 4. Find card files.
@@ -284,6 +358,50 @@ export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport>
 
 			fileErrors.push({ file: match.cardFile, reason })
 			matchedWithDiffs.push(match)
+		}
+	}
+
+	// In CardMarket-only mode (no TCGPlayer products), also process unmatched cards
+	// that have CM data — these are cards the matcher couldn't pair with any TCGPlayer
+	// product, but whose CM IDs can still be written from the manual map.
+	const unmatchedWithCm = unmatched.filter((u) => u.cardmarketReview)
+
+	for (const match of unmatchedWithCm) {
+		try {
+			const source = await fs.readFile(match.cardFile, 'utf8')
+
+			if (!hasVariants(source)) {
+				noVariantsCount++
+				continue
+			}
+
+			if (!opts.apply) {
+				continue
+			}
+
+			const builtSource = buildVariants(source, [], {
+				cardmarketReview: match.cardmarketReview,
+			})
+
+			const normalisedNewSource = ensureNewlineAtEof(ensureVariantsLast(builtSource))
+
+			if (normalisedNewSource === ensureNewlineAtEof(source)) {
+				skipped++
+				continue
+			}
+
+			await writeCardFile(match.cardFile, normalisedNewSource)
+			written++
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error)
+			const shortPath = path.relative(repoRoot, match.cardFile)
+
+			if (opts.apply) {
+				log(`  ERROR: ${shortPath}`)
+				log(`         ${reason.split('\n')[0]}`)
+			}
+
+			fileErrors.push({ file: match.cardFile, reason })
 		}
 	}
 
@@ -556,6 +674,60 @@ function readString(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim()
 		? value.trim()
 		: undefined
+}
+
+// ---------------------------------------------------------------------------
+// sbf-tcgplayer-set-exporter format parser
+// ---------------------------------------------------------------------------
+
+function parseTcgplayerExport(data: {
+	meta?: { groupId?: number; groupKey?: string; groupName?: string }
+	byCardId?: Record<
+		string,
+		{
+			cardId?: string
+			tcgplayerProducts?: Array<{
+				productId: number
+				name: string
+				rarity?: string | null
+				printings?: string[]
+			}>
+		}
+	>
+}): TCGTrackingSetResponse {
+	const products: TCGTrackingProduct[] = []
+
+	for (const [cardId, entry] of Object.entries(data.byCardId ?? {})) {
+		// Collector number = everything after the set code prefix (e.g. "MEP-001" → "001")
+		const number = cardId.split('-').slice(1).join('-') || null
+
+		for (const p of entry.tcgplayerProducts ?? []) {
+			// Synthesise one SKU per printing so resolveSkuVariants can detect variant type
+			const skus: Record<string, TCGTrackingSkuEntry> = {}
+			for (let i = 0; i < (p.printings?.length ?? 0); i++) {
+				skus[String(i)] = { var: p.printings![i] }
+			}
+
+			products.push({
+				id: p.productId,
+				name: p.name,
+				clean_name: p.name,
+				number,
+				rarity: p.rarity ?? null,
+				cardmarket_id: null,
+				cardtrader_id: null,
+				cardtrader: [],
+				skus: Object.keys(skus).length > 0 ? skus : undefined,
+			})
+		}
+	}
+
+	return {
+		set_id: data.meta?.groupId ?? 0,
+		set_name: data.meta?.groupName ?? '',
+		set_abbr: data.meta?.groupKey ?? '',
+		products,
+	}
 }
 
 // ---------------------------------------------------------------------------

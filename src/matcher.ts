@@ -51,6 +51,7 @@ export function matchProductsToCards(
 	const singleProducts = filterSingleProducts(products)
 
 	const byNumber = buildProductsByNumber(singleProducts)
+	const byNumberPadded = buildProductsByNumberPadded(singleProducts)
 	const byName = buildProductsByName(singleProducts)
 
 	const matchedProductIds = new Set<number>()
@@ -67,7 +68,17 @@ export function matchProductsToCards(
 		// -------------------------------------------------------------------
 
 		const numberKey = normaliseNumber(filename)
-		const numberMatches = byNumber.get(numberKey) ?? []
+		const paddedKey = paddedNumber(filename)
+
+		// Prefer products whose number matches the file's padded form (e.g. "001/064"
+		// matches file "001" exactly). This prevents single-digit energy numbers like
+		// "1" from colliding with main-set cards like "001/064" after zero-stripping.
+		const paddedMatches = byNumberPadded.get(paddedKey) ?? []
+		const allNormMatches = byNumber.get(numberKey) ?? []
+		const numberMatches =
+			paddedMatches.length > 0
+				? allNormMatches.filter((p) => paddedMatches.includes(p))
+				: allNormMatches
 
 		if (numberMatches.length >= 1) {
 			const filtered = sanityFilter(numberMatches, existingTcgplayerIds)
@@ -210,6 +221,26 @@ function buildProductsByNumber(
 	}
 
 	return byNumber
+}
+
+function buildProductsByNumberPadded(
+	products: TCGTrackingProduct[],
+): Map<string, TCGTrackingProduct[]> {
+	const byNumberPadded = new Map<string, TCGTrackingProduct[]>()
+
+	for (const product of products) {
+		const numbers = getProductNumbers(product)
+
+		for (const number of numbers) {
+			const key = paddedNumber(number)
+			const existing = byNumberPadded.get(key) ?? []
+
+			existing.push(product)
+			byNumberPadded.set(key, dedupeProducts(existing))
+		}
+	}
+
+	return byNumberPadded
 }
 
 function buildProductsByName(
@@ -355,6 +386,12 @@ function normaliseNumber(value: string): string {
 		.toLowerCase()
 		.trim()
 		.replace(/^0+/, '') || '0'
+}
+
+// Like normaliseNumber but keeps leading zeros — used to prefer "001/064" over "1"
+// when both would normalize to the same value.
+function paddedNumber(value: string): string {
+	return value.split('/')[0].toLowerCase().trim()
 }
 
 function normaliseName(value: string): string {
