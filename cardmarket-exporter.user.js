@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cardmarket Set Merge Exporter (Any Set + Pagination + Reliable Export)
 // @namespace    sixbyfive-tools
-// @version      3.5.0
+// @version      3.5.5
 // @description  Collects Cardmarket productIds + variant names from Pokemon Singles set pages. Supports both the new grid layout (2025+) and legacy productRow layout. Merges across slugs by derived groupKey.
 // @match        https://www.cardmarket.com/*/Pokemon/Products/Singles/*
 // @match        https://www.cardmarket.com/*/Pokemon/Products/Singles/*/*
@@ -71,7 +71,47 @@
   }
 
   function saveStore(groupKey, store) {
-    localStorage.setItem(getStoreKey(groupKey), JSON.stringify(store));
+    try {
+      localStorage.setItem(getStoreKey(groupKey), JSON.stringify(store));
+    } catch (e) {
+      if (e.name === "QuotaExceededError" || e.code === 22) {
+        setStatus("localStorage full — click 'Purge old data' to free space, then re-collect.", false);
+      }
+      throw e;
+    }
+  }
+
+  // Slim down all existing stores written by older script versions (which stored
+  // a full `sources` array and fat fields on every cardmarketProducts entry).
+  function pruneAllStores() {
+    try {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(STORE_KEY_PREFIX)) keys.push(k);
+      }
+      for (const key of keys) {
+        try {
+          const raw = localStorage.getItem(key);
+          if (!raw) continue;
+          const store = JSON.parse(raw);
+          let changed = false;
+          for (const entry of Object.values(store.entries || {})) {
+            if (entry.sources) { delete entry.sources; changed = true; }
+            if (Array.isArray(entry.cardmarketProducts)) {
+              entry.cardmarketProducts = entry.cardmarketProducts.map((p) => {
+                if (!("url" in p) && !("setSlug" in p) && !("rawCardId" in p)) return p;
+                changed = true;
+                return { productId: p.productId, name: p.name || "", variantLabel: p.variantLabel || "", bucket: p.bucket || "" };
+              });
+            }
+          }
+          if (changed) localStorage.setItem(key, JSON.stringify(store));
+        } catch { /* skip corrupt key */ }
+      }
+    } catch (e) {
+      console.warn("[SBF Exporter] pruneAllStores error:", e);
+    }
   }
 
   function clearStore(groupKey) {
@@ -205,6 +245,17 @@
             font-weight: 900;
             font-size: 12px;
           ">Reset collected (this group)</button>
+
+          <button id="sbf-purge" title="Remove sources arrays and trim fat fields from all stored sets to free localStorage space" style="
+            border: 1px solid #1f2937;
+            background: #111827;
+            color: #fbbf24;
+            border-radius: 12px;
+            padding: 8px 10px;
+            cursor: pointer;
+            font-weight: 900;
+            font-size: 12px;
+          ">Purge old data</button>
 
           <label style="display:flex; gap:8px; align-items:center; font-size: 12px; color:#cbd5e1;">
             <input id="sbf-debug" type="checkbox" />
@@ -401,9 +452,20 @@
   function extractProductId(rowEl) {
     const img = rowEl.querySelector("img");
     if (img) {
-      const src = img.src || img.getAttribute("data-src") || img.getAttribute("srcset") || "";
-      const m = src.match(IMG_PRODUCT_ID_RE);
-      if (m) return Number(m[1]);
+      // Use getAttribute (not the .src property) so lazy-loaded images with no real src
+      // attribute don't short-circuit the chain — img.src always resolves to a non-empty
+      // absolute URL even when the attribute is absent or a placeholder.
+      for (const src of [
+        img.getAttribute("src"),
+        img.getAttribute("data-echo"),
+        img.getAttribute("data-src"),
+        img.getAttribute("srcset"),
+        img.getAttribute("data-srcset"),
+      ]) {
+        if (!src) continue;
+        const m = src.match(IMG_PRODUCT_ID_RE);
+        if (m) return Number(m[1]);
+      }
     }
 
     const idAttr = rowEl.getAttribute("id") || "";
@@ -419,7 +481,7 @@
   }
 
   function parseCardIdFromDisplay(displayText) {
-    const m = String(displayText).match(/\(([a-zA-Z0-9]+)\s+([0-9]{1,4}[a-zA-Z]?)\)/);
+    const m = String(displayText).match(/\(([a-zA-Z0-9]+)\s+([a-zA-Z]{0,3}[0-9]{1,4}[a-zA-Z]?)\)/);
     if (!m) return null;
 
     const setCode = normalizeSetCode(m[1]);
@@ -435,7 +497,7 @@
   }
 
   function toCanonicalCardId(rawCardId) {
-    const m = String(rawCardId || "").match(/^([A-Z0-9]+)-(\d{3}[A-Z]?)$/);
+    const m = String(rawCardId || "").match(/^([A-Z0-9]+)-([A-Z]{0,3}\d{1,4}[A-Z]?)$/);
     if (!m) return null;
     const rawSetCode = m[1];
     const num = m[2];
@@ -599,7 +661,6 @@
         cardId: canonicalCardId,
         rawCardIds: [],
         ids: { base: [], additional: [] },
-        sources: [],
         cardmarketProducts: [],
       };
 
@@ -608,30 +669,7 @@
       if (!entry.rawCardIds.includes(rawCardId)) entry.rawCardIds.push(rawCardId);
       entry.ids[bucket].push(productId);
 
-      entry.sources.push({
-        productId,
-        kind: "set",
-        bucket,
-        rawCardId,
-        setSlug,
-        groupKey,
-        setName: pageName,
-        url: location.href,
-        name: cleanName,
-        variantLabel,
-      });
-
-      entry.cardmarketProducts.push({
-        productId,
-        name: cleanName,
-        variantLabel,
-        bucket,
-        rawCardId,
-        canonicalCardId,
-        setSlug,
-        setName: pageName,
-        url: location.href,
-      });
+      entry.cardmarketProducts.push({ productId, name: cleanName, variantLabel, bucket });
 
       page.stats.rowsPaired++;
     }
@@ -642,44 +680,39 @@
       e.ids.base = uniqSorted(e.ids.base);
       e.ids.additional = uniqSorted(e.ids.additional);
 
-      const seenSources = new Set();
-      e.sources = e.sources.filter((s) => {
-        const key = `${s.productId}|${s.bucket}|${s.url}`;
-        if (seenSources.has(key)) return false;
-        seenSources.add(key);
-        return true;
-      });
-
       const seenProducts = new Set();
       e.cardmarketProducts = (e.cardmarketProducts || []).filter((p) => {
-        const id = Number(p.productId);
-        if (seenProducts.has(id)) return false;
-        seenProducts.add(id);
+        if (seenProducts.has(p.productId)) return false;
+        seenProducts.add(p.productId);
         return true;
       });
 
-      // For sets where CM doesn't use a separate Additionals slug (e.g. Surging Sparks),
-      // multiple products for the same card all land on the base page with bucket="base".
-      // Reclassify the 2nd, 3rd, ... base products as "additional" so they flow through
-      // the variant assignment logic in the Bulk Edit UI instead of being silently dropped.
-      const baseProducts = e.cardmarketProducts.filter((p) => p.bucket === "base");
-      if (baseProducts.length > 1) {
-        const primaryId = baseProducts[0].productId;
-        for (const p of e.cardmarketProducts) {
-          if (p.bucket === "base" && p.productId !== primaryId) {
-            p.bucket = "additional";
+      // Cards whose collector number starts with letters (GG, TG, …) never have a
+      // reverse-holo print, so "additional" is meaningless for them. Collapse everything
+      // into base so the Bulk Edit UI doesn't allocate an empty reverse-holo slot.
+      if (/^[A-Z0-9]+-[A-Z]+\d/.test(k)) {
+        e.ids.base = uniqSorted([...e.ids.base, ...e.ids.additional]);
+        e.ids.additional = [];
+        for (const p of e.cardmarketProducts) p.bucket = "base";
+      } else {
+        // For sets where CM doesn't use a separate Additionals slug (e.g. Surging Sparks),
+        // multiple products for the same card all land on the base page with bucket="base".
+        // Reclassify the 2nd, 3rd, ... base products as "additional" so they flow through
+        // the variant assignment logic in the Bulk Edit UI instead of being silently dropped.
+        const baseProducts = e.cardmarketProducts.filter((p) => p.bucket === "base");
+        if (baseProducts.length > 1) {
+          const primaryId = baseProducts[0].productId;
+          for (const p of e.cardmarketProducts) {
+            if (p.bucket === "base" && p.productId !== primaryId) {
+              p.bucket = "additional";
+            }
           }
+          e.ids.base = [primaryId];
+          e.ids.additional = uniqSorted([
+            ...e.ids.additional,
+            ...baseProducts.slice(1).map((p) => p.productId),
+          ]);
         }
-        for (const s of e.sources || []) {
-          if (s.bucket === "base" && s.productId !== primaryId) {
-            s.bucket = "additional";
-          }
-        }
-        e.ids.base = [primaryId];
-        e.ids.additional = uniqSorted([
-          ...e.ids.additional,
-          ...baseProducts.slice(1).map((p) => p.productId),
-        ]);
       }
     }
 
@@ -720,7 +753,6 @@
         ids: { base: e.ids.base, additional: e.ids.additional },
         rawCardIds: e.rawCardIds,
         cardmarketProducts: e.cardmarketProducts || [],
-        sources: e.sources,
       };
     }
 
@@ -832,32 +864,18 @@
             cardId,
             rawCardIds: [],
             ids: { base: [], additional: [] },
-            sources: [],
             cardmarketProducts: [],
           };
           const target = realStore.entries[cardId];
           target.rawCardIds = Array.from(new Set([...target.rawCardIds, ...(staleEntry.rawCardIds || [])])).sort();
           target.ids.base = uniqSorted([...target.ids.base, ...(staleEntry.ids?.base || [])]);
           target.ids.additional = uniqSorted([...target.ids.additional, ...(staleEntry.ids?.additional || [])]);
-          target.sources = [...target.sources, ...(staleEntry.sources || [])];
-          target.cardmarketProducts = [
-            ...(target.cardmarketProducts || []),
-            ...((staleEntry.cardmarketProducts || []).length
-              ? staleEntry.cardmarketProducts
-              : (staleEntry.sources || [])
-                  .filter((s) => Number.isFinite(Number(s?.productId)))
-                  .map((s) => ({
-                    productId: Number(s.productId),
-                    name: s.name || "",
-                    variantLabel: s.variantLabel || "",
-                    bucket: s.bucket || "",
-                    rawCardId: s.rawCardId || "",
-                    canonicalCardId: cardId,
-                    setSlug: s.setSlug || "",
-                    setName: s.setName || "",
-                    url: s.url || "",
-                  }))),
-          ];
+          const staleCmProducts = (staleEntry.cardmarketProducts || []).length
+            ? staleEntry.cardmarketProducts
+            : (staleEntry.sources || [])
+                .filter((s) => Number.isFinite(Number(s?.productId)))
+                .map((s) => ({ productId: Number(s.productId), name: s.name || "", variantLabel: s.variantLabel || "", bucket: s.bucket || "" }));
+          target.cardmarketProducts = [...(target.cardmarketProducts || []), ...staleCmProducts];
         }
 
         for (const p of staleStore.pages) {
@@ -869,21 +887,13 @@
 
         for (const cardId of Object.keys(realStore.entries)) {
           const e = realStore.entries[cardId];
-          const seenSources = new Set();
-          e.sources = (e.sources || []).filter((s) => {
-            const key = `${s.productId}|${s.bucket}|${s.url}`;
-            if (seenSources.has(key)) return false;
-            seenSources.add(key);
-            return true;
-          });
-
           const seenProducts = new Set();
           e.cardmarketProducts = (e.cardmarketProducts || []).filter((p) => {
-            const key = `${p.productId}|${p.bucket}|${p.url}`;
-            if (seenProducts.has(key)) return false;
-            seenProducts.add(key);
+            if (seenProducts.has(p.productId)) return false;
+            seenProducts.add(p.productId);
             return true;
           });
+          delete e.sources;
         }
 
         saveStore(realKey, realStore);
@@ -899,9 +909,16 @@
     }
   })();
 
+  $("#sbf-purge").addEventListener("click", () => {
+    pruneAllStores();
+    setStatus("Purged old data from all stored sets. localStorage freed.", true);
+    renderDetected();
+  });
+
   // ===========================================================================
   // Boot
   // ===========================================================================
+  pruneAllStores();
   renderDetected();
   setStatus("Ready. Collect base + additionals (site=1..N) then Export.");
 })();

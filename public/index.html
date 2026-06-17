@@ -998,12 +998,12 @@
     </div>
 
     <div class="sidebar-section">
-      <label>TCGPlayer set JSON <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted2)">(optional)</span></label>
+      <label>TCGPlayer set JSON / CSV <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted2)">(optional)</span></label>
       <div class="file-pick-wrap">
         <input type="text" id="tcgplayer-json-input" placeholder="No file chosen" spellcheck="false" readonly>
         <button class="btn-clear" type="button" id="tcgplayer-json-clear" title="Clear" hidden>&#xD7;</button>
         <button class="btn-browse" type="button" title="Choose file" onclick="document.getElementById('tcgplayer-json-file').click()">&#128193;</button>
-        <input type="file" id="tcgplayer-json-file" accept=".json" style="display:none">
+        <input type="file" id="tcgplayer-json-file" accept=".json,.csv" style="display:none">
       </div>
     </div>
 
