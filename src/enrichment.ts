@@ -111,27 +111,34 @@ export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport>
 		`${setParts.at(-1)}.ts`,
 	)
 
-	// Load the local TCGTracking JSON if provided — it supplies both set_id and products.
+	// Load the local TCGTracking JSON/CSV if provided — it supplies both set_id and products.
 	let localSetResponse: TCGTrackingSetResponse | undefined
 	if (opts.tcgplayerJson) {
 		const raw = await fs.readFile(opts.tcgplayerJson, 'utf8')
-		const parsed = JSON.parse(raw)
-		if (parsed && Array.isArray(parsed.products)) {
-			// Raw TCGTracking API shape: { set_id, products: [...] }
-			localSetResponse = parsed as TCGTrackingSetResponse
-		} else if (parsed && parsed.byCardId && typeof parsed.byCardId === 'object') {
-			// Custom sbf-tcgplayer-set-exporter shape: { meta: { groupId }, byCardId: { ... } }
-			localSetResponse = parseTcgplayerExport(parsed)
-		} else if (parsed && parsed.meta?.tool === 'pricing-id-tooling') {
-			throw new Error(
-				`The file in the 'TCGPlayer JSON' field is a CardMarket map file, not a TCGPlayer export. Please clear the TCGPlayer JSON field in the UI: ${opts.tcgplayerJson}`,
-			)
+
+		if (opts.tcgplayerJson.toLowerCase().endsWith('.csv')) {
+			// TCGCSV format: CSV export from tcgcsv.com
+			localSetResponse = parseTcgcsv(raw)
 		} else {
-			throw new Error(
-				`TCGPlayer JSON is not a recognised format. Expected either a TCGTracking API response ({ set_id, products: [...] }) or a sbf-tcgplayer-set-exporter file ({ meta, byCardId: {...} }): ${opts.tcgplayerJson}`,
-			)
+			const parsed = JSON.parse(raw)
+			if (parsed && Array.isArray(parsed.products)) {
+				// Raw TCGTracking API shape: { set_id, products: [...] }
+				localSetResponse = parsed as TCGTrackingSetResponse
+			} else if (parsed && parsed.byCardId && typeof parsed.byCardId === 'object') {
+				// Custom sbf-tcgplayer-set-exporter shape: { meta: { groupId }, byCardId: { ... } }
+				localSetResponse = parseTcgplayerExport(parsed)
+			} else if (parsed && parsed.meta?.tool === 'pricing-id-tooling') {
+				throw new Error(
+					`The file in the 'TCGPlayer JSON' field is a CardMarket map file, not a TCGPlayer export. Please clear the TCGPlayer JSON field in the UI: ${opts.tcgplayerJson}`,
+				)
+			} else {
+				throw new Error(
+					`TCGPlayer JSON is not a recognised format. Expected either a TCGTracking API response ({ set_id, products: [...] }) or a sbf-tcgplayer-set-exporter file ({ meta, byCardId: {...} }): ${opts.tcgplayerJson}`,
+				)
+			}
 		}
-		log(`TCGPlayer JSON: ${path.resolve(opts.tcgplayerJson)} (${localSetResponse.products.length} products)`)
+
+		log(`TCGPlayer data: ${path.resolve(opts.tcgplayerJson)} (${localSetResponse.products.length} products)`)
 	}
 
 	const setFile = await importTs<{ thirdParty?: { tcgplayer?: number } }>(setFilePath)
@@ -185,10 +192,39 @@ export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport>
 	// 3. Load TCGTracking products and SKU variation data.
 	let products: TCGTrackingProduct[]
 
+	// When a file AND a set ID pointing to a different group are both supplied,
+	// the file covers a sub-set (e.g. Galarian Gallery CSV, group 17689) and the
+	// set ID covers the main set (e.g. Crown Zenith, group 17688). Fetch the main
+	// set from the API and merge the file products in, deduplicating by product ID.
+	const hasExtraSetId =
+		typeof tcgplayerSetId === 'number' &&
+		localSetResponse &&
+		localSetResponse.set_id !== tcgplayerSetId
+
 	if (cardmarketOnlyMode) {
 		products = []
+	} else if (localSetResponse && hasExtraSetId) {
+		// Merge: API products for the main set + file products for the sub-set.
+		log(`Fetching TCGTracking products for set ${tcgplayerSetId} (main set)...`)
+		const [setResponse, skuResponse] = await Promise.all([
+			fetchSetProducts(categoryId, tcgplayerSetId!),
+			fetchSetSkus(categoryId, tcgplayerSetId!),
+		])
+		const apiProducts = attachSkusToProducts(setResponse.products, skuResponse?.products)
+		log(`Found ${apiProducts.length} products from API`)
+		if (skuResponse) {
+			log(`Found ${skuResponse.sku_count ?? countSkus(skuResponse.products)} SKU variations`)
+		}
+
+		// File products (sub-set) already have embedded SKUs — merge, API first so
+		// file products win on any ID collision.
+		const apiProductIds = new Set(apiProducts.map((p) => p.id))
+		const extraProducts = localSetResponse.products.filter((p) => !apiProductIds.has(p.id))
+		log(`Merging ${extraProducts.length} sub-set products from file (${localSetResponse.products.length} total, ${localSetResponse.products.length - extraProducts.length} already in API set)`)
+		products = [...apiProducts, ...extraProducts]
+		log(`Total products after merge: ${products.length}`)
 	} else if (localSetResponse) {
-		// Products came from the local JSON — check whether SKUs are already embedded.
+		// Products came from the local file only — check whether SKUs are already embedded.
 		const hasSkus = localSetResponse.products.some((p: TCGTrackingProduct) => p.skus && Object.keys(p.skus).length > 0)
 
 		if (hasSkus) {
@@ -674,6 +710,124 @@ function readString(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim()
 		? value.trim()
 		: undefined
+}
+
+// ---------------------------------------------------------------------------
+// TCGCSV format parser (tcgcsv.com CSV export)
+// ---------------------------------------------------------------------------
+
+function parseTcgcsv(csv: string): TCGTrackingSetResponse {
+	const rows = parseCsvRows(csv)
+
+	if (rows.length < 2) {
+		return { set_id: 0, set_name: '', set_abbr: '', products: [] }
+	}
+
+	const headers = rows[0]
+	const idx = (name: string) => headers.indexOf(name)
+
+	const colProductId = idx('productId')
+	const colName = idx('name')
+	const colCleanName = idx('cleanName')
+	const colGroupId = idx('groupId')
+	const colExtNumber = idx('extNumber')
+	const colExtRarity = idx('extRarity')
+	const colSubTypeName = idx('subTypeName')
+
+	if (colProductId < 0 || colExtNumber < 0) {
+		throw new Error(
+			'TCGCSV file is missing required columns (productId, extNumber). ' +
+			'Download the file from tcgcsv.com and try again.',
+		)
+	}
+
+	const products: TCGTrackingProduct[] = []
+	let set_id = 0
+
+	for (let i = 1; i < rows.length; i++) {
+		const row = rows[i]
+
+		const productId = parseInt(row[colProductId] ?? '', 10)
+		if (!productId || isNaN(productId)) continue
+
+		if (!set_id && colGroupId >= 0) {
+			const gid = parseInt(row[colGroupId] ?? '', 10)
+			if (gid && !isNaN(gid)) set_id = gid
+		}
+
+		// extNumber like "GG19/GG70" or "TG01/TG30" — strip the "/TOTAL" part
+		const extNumber = (row[colExtNumber] ?? '').trim()
+		const number = extNumber.split('/')[0].trim() || null
+
+		const subTypeName = colSubTypeName >= 0 ? (row[colSubTypeName] ?? '').trim() : ''
+		const skus: Record<string, TCGTrackingSkuEntry> = {}
+		if (subTypeName) {
+			skus['0'] = { var: subTypeName }
+		}
+
+		products.push({
+			id: productId,
+			name: colName >= 0 ? (row[colName] ?? '').trim() : String(productId),
+			clean_name: colCleanName >= 0
+				? (row[colCleanName] ?? '').trim() || (row[colName] ?? '').trim()
+				: colName >= 0 ? (row[colName] ?? '').trim() : String(productId),
+			number,
+			rarity: colExtRarity >= 0 ? ((row[colExtRarity] ?? '').trim() || null) : null,
+			cardmarket_id: null,
+			cardtrader_id: null,
+			cardtrader: [],
+			skus: Object.keys(skus).length > 0 ? skus : undefined,
+		})
+	}
+
+	return { set_id, set_name: '', set_abbr: '', products }
+}
+
+function parseCsvRows(csv: string): string[][] {
+	const rows: string[][] = []
+	let current: string[] = []
+	let field = ''
+	let inQuotes = false
+
+	for (let i = 0; i < csv.length; i++) {
+		const ch = csv[i]
+
+		if (inQuotes) {
+			if (ch === '"') {
+				if (csv[i + 1] === '"') {
+					// Escaped quote: "" → "
+					field += '"'
+					i++
+				} else {
+					inQuotes = false
+				}
+			} else {
+				field += ch
+			}
+		} else if (ch === '"') {
+			inQuotes = true
+		} else if (ch === ',') {
+			current.push(field)
+			field = ''
+		} else if (ch === '\r') {
+			// Skip CR in CRLF sequences
+		} else if (ch === '\n') {
+			current.push(field)
+			field = ''
+			if (current.length > 0) rows.push(current)
+			current = []
+		} else {
+			field += ch
+		}
+	}
+
+	// Push the final row (file may not end with newline)
+	if (field || current.length > 0) {
+		current.push(field)
+		if (current.some((f) => f.trim())) rows.push(current)
+	}
+
+	return rows
 }
 
 // ---------------------------------------------------------------------------
