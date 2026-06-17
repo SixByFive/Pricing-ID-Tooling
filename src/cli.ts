@@ -25,6 +25,22 @@ interface CliOptions {
 	 * <cardmarket-json-name>.manual-map.json
 	 */
 	cardmarketMap?: string
+
+	/**
+	 * Override the TCGPlayer set ID.
+	 *
+	 * Used when the set file does not yet have a thirdParty.tcgplayer value.
+	 */
+	tcgplayerSetId?: number
+
+	/**
+	 * Path to a local TCGPlayer set JSON file.
+	 *
+	 * Supported formats:
+	 * - TCGTracking API response: { set_id, products: [...] }
+	 * - sbf-tcgplayer-set-exporter: { meta: { groupId, groupKey }, byCardId: {...} }
+	 */
+	tcgplayerJson?: string
 }
 
 const options = parseArgs(process.argv.slice(2))
@@ -70,6 +86,8 @@ await runEnrichment({
 	cardmarketJson: options.cardmarketJson,
 	cardmarketMap: options.cardmarketMap,
 	fillMissingCardtrader: options.fillMissingCardtrader,
+	tcgplayerSetId: options.tcgplayerSetId,
+	tcgplayerJson: options.tcgplayerJson,
 	log: console.log,
 }).catch((error) => {
 	console.error('')
@@ -79,6 +97,8 @@ await runEnrichment({
 })
 
 function parseArgs(args: string[]): CliOptions {
+	const rawSetId = getArg(args, '--tcgplayer-set-id')
+
 	return {
 		repo: getArg(args, '--repo') ?? process.cwd(),
 		set: getArg(args, '--set'),
@@ -87,6 +107,8 @@ function parseArgs(args: string[]): CliOptions {
 		fillMissingCardtrader: args.includes('--fill-missing-cardtrader'),
 		cardmarketJson: getArg(args, '--cardmarket-json'),
 		cardmarketMap: getArg(args, '--cardmarket-map'),
+		tcgplayerSetId: rawSetId ? Number(rawSetId) : undefined,
+		tcgplayerJson: getArg(args, '--tcgplayer-json'),
 	}
 }
 
@@ -144,6 +166,13 @@ Options:
   --cardmarket-map <path>    Optional manual CardMarket variant mapping file.
                              If omitted, defaults to:
                              <cardmarket-json-name>.manual-map.json
+
+  --tcgplayer-set-id <id>    Override the TCGPlayer set ID.
+                             Use when the set file has no thirdParty.tcgplayer.
+
+  --tcgplayer-json <path>    Path to a local TCGPlayer set JSON file.
+                             Supported: TCGTracking API response or
+                             sbf-tcgplayer-set-exporter format.
 
   --help, -h                 Show this help message.
 `)
