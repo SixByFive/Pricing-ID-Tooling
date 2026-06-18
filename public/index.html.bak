@@ -905,102 +905,6 @@
     margin: 8px 0;
   }
 
-  .id-map-hint {
-    margin: 10px 0 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .id-map-options {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .btn-id-map-entry {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    background: var(--surface3);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    padding: 5px 10px;
-    color: var(--text);
-    cursor: pointer;
-    text-align: left;
-    font-size: 12px;
-    transition: border-color .15s;
-  }
-
-  .btn-id-map-entry:hover {
-    border-color: var(--accent);
-  }
-
-  .btn-id-map-entry code {
-    font-family: var(--font-mono);
-    color: var(--accent-hover);
-  }
-
-  .btn-id-map-entry .copy-label {
-    font-size: 11px;
-    color: var(--accent);
-    flex-shrink: 0;
-  }
-
-  .btn-id-map-entry .copy-label.error {
-    color: var(--danger);
-  }
-
-  .id-map-manual {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-top: 2px;
-  }
-
-  .id-map-manual-key {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--accent-hover);
-    flex-shrink: 0;
-  }
-
-  .id-map-manual-input {
-    flex: 1;
-    background: var(--surface3);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 4px 8px;
-    color: var(--text);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    min-width: 0;
-  }
-
-  .id-map-manual-input:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-
-  .btn-id-map-copy-manual {
-    background: var(--surface3);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 4px 10px;
-    color: var(--muted2);
-    cursor: pointer;
-    font-size: 11px;
-    flex-shrink: 0;
-    transition: border-color .15s, color .15s;
-  }
-
-  .btn-id-map-copy-manual:hover {
-    border-color: var(--accent);
-    color: var(--text);
-  }
-
   .filter-bar {
     display: flex;
     align-items: center;
@@ -1109,16 +1013,6 @@
     </div>
 
     <div class="sidebar-section">
-      <label>TCGPlayer ID overrides <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted2)">(JSON, optional)</span></label>
-      <div class="file-pick-wrap">
-        <input type="text" id="tcgplayer-id-map-input" placeholder="No file chosen" spellcheck="false" readonly>
-        <button class="btn-clear" type="button" id="tcgplayer-id-map-clear" title="Clear" hidden>&#xD7;</button>
-        <button class="btn-browse" type="button" title="Choose file" onclick="document.getElementById('tcgplayer-id-map-file').click()">&#128193;</button>
-        <input type="file" id="tcgplayer-id-map-file" accept=".json" style="display:none">
-      </div>
-    </div>
-
-    <div class="sidebar-section">
       <label>Sets</label>
       <div class="search-wrap">
         <input type="text" id="set-search" placeholder="Search sets…" spellcheck="false">
@@ -1218,7 +1112,6 @@
   const cardmarketJsonInput = bindFilePicker('cardmarket-json-input', 'cardmarket-json-file', 'cardmarket-json-clear', 'cardmarketJson')
   const cardmarketMapInput = bindFilePicker('cardmarket-map-input', 'cardmarket-map-file', 'cardmarket-map-clear', 'cardmarketMap')
   const tcgplayerJsonInput = bindFilePicker('tcgplayer-json-input', 'tcgplayer-json-file', 'tcgplayer-json-clear', 'tcgplayerJson')
-  const tcgplayerIdMapInput = bindFilePicker('tcgplayer-id-map-input', 'tcgplayer-id-map-file', 'tcgplayer-id-map-clear', 'tcgplayerIdMap')
 
   let repoTimer
 
@@ -1392,7 +1285,6 @@
           fillMissingCardtrader: fillMissingCardtrader || undefined,
           tcgplayerSetId: parseInt(document.getElementById('tcgplayer-set-id-input').value) || undefined,
           tcgplayerJson: tcgplayerJsonInput.value.trim() || undefined,
-          tcgplayerIdMap: tcgplayerIdMapInput.value.trim() || undefined,
         }),
       })
 
@@ -1663,7 +1555,6 @@
 
   function renderAmbiguousCard(item) {
     const file = filename(item.cardFile)
-    const cardKey = file.replace(/\.ts$/, '')
 
     return `
       <details>
@@ -1682,21 +1573,8 @@
 
         <div class="details-body">
           <p class="inline-warning">
-            Multiple products resolve to the same variation. Pick one and add it to your TCGPlayer ID overrides JSON.
+            Multiple products appear to resolve to the same variation. Review manually before writing.
           </p>
-
-          <div class="id-map-hint">
-            <span class="muted small">Add to TCGPlayer ID overrides — click to save:</span>
-            <div class="id-map-options">
-              ${(item.products ?? []).map((p) => `
-                <button class="btn-id-map-entry" onclick="saveIdMapEntry(${escapeHtml(JSON.stringify(cardKey))}, ${p.id}, this)" title="${escapeHtml(p.name ?? '')}">
-                  <code>"${escapeHtml(cardKey)}": ${p.id}</code>
-                  <span class="copy-label">save</span>
-                </button>
-              `).join('')}
-              ${renderIdMapManualEntry(cardKey)}
-            </div>
-          </div>
 
           ${renderCardmarketEditor(item.cardmarketReview)}
 
@@ -1710,7 +1588,6 @@
 
   function renderUnmatchedCard(item) {
     const file = filename(item.cardFile)
-    const cardKey = file.replace(/\.ts$/, '')
 
     return `
       <details>
@@ -1729,14 +1606,6 @@
 
         <div class="details-body">
           <p class="muted small">No matching TCGTracking product was found for this card file.</p>
-
-          <div class="id-map-hint">
-            <span class="muted small">Add to TCGPlayer ID overrides:</span>
-            <div class="id-map-options">
-              ${renderIdMapManualEntry(cardKey)}
-            </div>
-          </div>
-
           ${renderCardmarketEditor(item.cardmarketReview)}
         </div>
       </details>
@@ -2406,69 +2275,6 @@
 
   function filename(filePath) {
     return String(filePath ?? '').split(/[\\/]/).at(-1) ?? String(filePath ?? '')
-  }
-
-  async function saveIdMapEntry(cardKey, productId, btn) {
-    const label = btn.querySelector('.copy-label')
-    if (label) label.textContent = '…'
-
-    try {
-      const res = await fetch('/api/tcgplayer-id-map', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mapPath: tcgplayerIdMapInput.value.trim() || undefined,
-          set: selectedSet,
-          cardKey,
-          productId,
-        }),
-      })
-
-      if (!res.ok) throw new Error(await res.text())
-
-      const { mapPath } = await res.json()
-
-      if (!tcgplayerIdMapInput.value.trim()) {
-        tcgplayerIdMapInput.value = mapPath
-        localStorage.setItem('tcgplayerIdMap', mapPath)
-        document.getElementById('tcgplayer-id-map-clear').hidden = false
-      }
-
-      if (label) {
-        label.textContent = 'saved!'
-        setTimeout(() => { label.textContent = 'save' }, 1500)
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (label) {
-        label.textContent = `error: ${msg}`
-        label.classList.add('error')
-      }
-      console.error('saveIdMapEntry:', err)
-    } finally {
-      if (label && label.textContent === '…') label.textContent = 'save'
-    }
-  }
-
-  function renderIdMapManualEntry(cardKey) {
-    const uid = `id-map-manual-${cardKey.replace(/[^a-z0-9]/gi, '-')}-${Math.random().toString(36).slice(2, 7)}`
-    return `
-      <div class="id-map-manual">
-        <code class="id-map-manual-key">"${escapeHtml(cardKey)}":</code>
-        <input type="number" class="id-map-manual-input" id="${uid}" placeholder="product ID" min="1" step="1"
-          onkeydown="if(event.key==='Enter') document.getElementById('${uid}-btn').click()">
-        <button class="btn-id-map-copy-manual" id="${uid}-btn" onclick="saveIdMapManual(${escapeHtml(JSON.stringify(cardKey))}, '${uid}', this)">
-          <span class="copy-label">save</span>
-        </button>
-      </div>
-    `
-  }
-
-  async function saveIdMapManual(cardKey, inputId, btn) {
-    const input = document.getElementById(inputId)
-    const id = parseInt(input?.value ?? '', 10)
-    if (!id || isNaN(id)) { input?.focus(); return }
-    await saveIdMapEntry(cardKey, id, btn)
   }
 
   function escapeHtml(value) {

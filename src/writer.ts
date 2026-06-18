@@ -93,7 +93,27 @@ export function buildVariants(
 	const variantsRange = findPropRange(source, 'variants')
 
 	if (!variantsRange) {
-		return source
+		// No variants property — try to insert one from CM mappings / products.
+		const entries = assembleVariantEntries([], products, options.cardmarketReview)
+		if (entries.length === 0) return source
+
+		const objectRange = findCardObjectRange(source)
+		if (!objectRange) return source
+
+		const baseIndent = lineIndent(source, objectRange.close)
+		const hasCardmarketReview = Boolean(options.cardmarketReview)
+		const newPropText = renderEntriesBlock(entries, baseIndent, hasCardmarketReview)
+
+		let nextSource =
+			source.slice(0, objectRange.close) +
+			baseIndent +
+			newPropText +
+			'\n' +
+			source.slice(objectRange.close)
+
+		nextSource = removeTopLevelThirdParty(nextSource)
+		nextSource = ensureVariantsLast(nextSource)
+		return nextSource === source ? source : nextSource
 	}
 
 	const propText = source.slice(variantsRange.start, variantsRange.end)
@@ -344,12 +364,17 @@ function assembleVariantEntries(
 	}
 
 	// ── Both modes: apply CM manual mappings ─────────────────────────────────
+	// When no TCGTracking products are present, CardMarket mappings are the sole
+	// source of variant structure — treat all mappings as non-merge-only so plain
+	// variants (e.g. type:normal, type:holo) still get written even without TCGPlayer data.
+	const cardmarketOnly = products.length === 0
+
 	for (const manualMatch of buildManualCardmarketMatches(cardmarketReview)) {
 		if (coveredKeys.has(manualMatch.key)) {
 			continue
 		}
 
-		if (manualMatch.mergeOnly) {
+		if (manualMatch.mergeOnly && !cardmarketOnly) {
 			// Plain variants are merge-only: they cannot be created from scratch because
 			// TCGTracking is the authoritative source for plain variant existence.
 			// However, if an existing entry holds this CM product ID under the WRONG type
@@ -924,6 +949,14 @@ function removeTopLevelThirdParty(source: string): string {
 
 	let start = range.start
 	let end = range.end
+
+	// Include the indent and preceding newline so removal doesn't leave a blank line.
+	while (start > 0 && (source[start - 1] === '\t' || source[start - 1] === ' ')) {
+		start--
+	}
+	if (start > 0 && source[start - 1] === '\n') {
+		start--
+	}
 
 	// Trim surrounding blank lines neatly.
 	while (source[start - 1] === '\n' && source[start - 2] === '\n') {

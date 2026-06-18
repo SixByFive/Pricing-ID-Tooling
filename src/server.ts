@@ -91,6 +91,7 @@ Bun.serve({
 					fillMissingCardtrader?: boolean
 					tcgplayerSetId?: number
 					tcgplayerJson?: string
+					tcgplayerIdMap?: string
 				}>(req)
 
 				if (!body.ok) {
@@ -106,6 +107,7 @@ Bun.serve({
 				const tcgplayerSetId =
 					typeof body.data.tcgplayerSetId === 'number' ? body.data.tcgplayerSetId : undefined
 				const tcgplayerJson = body.data.tcgplayerJson?.trim() || undefined
+				const tcgplayerIdMap = body.data.tcgplayerIdMap?.trim() || undefined
 
 				if (!repo || !set) {
 					return json({ error: 'repo and set are required' }, 400)
@@ -140,6 +142,7 @@ Bun.serve({
 								fillMissingCardtrader,
 								tcgplayerSetId,
 								tcgplayerJson,
+								tcgplayerIdMap,
 								log: sendLine,
 							})
 
@@ -257,6 +260,63 @@ Bun.serve({
 					mappingPath: context.mappingPath,
 					mapping: nextMapping,
 				})
+			}
+
+			// -----------------------------------------------------------------
+			// API: save/remove a TCGPlayer ID override entry
+			// -----------------------------------------------------------------
+			// POST /api/tcgplayer-id-map
+			// body: { mapPath?: string, set?: string, cardKey: string, productId: number | null }
+			// If productId is null, the entry is removed.
+			// If mapPath is omitted, an auto path is created from set slug under var/maps/.
+			// Returns: { mapPath, map }
+
+			if (url.pathname === '/api/tcgplayer-id-map' && req.method === 'POST') {
+				const body = await readJsonBody<{
+					mapPath?: string
+					set?: string
+					cardKey?: string
+					productId?: number | null
+				}>(req)
+
+				if (!body.ok) {
+					return json({ error: body.error }, 400)
+				}
+
+				const cardKey = body.data.cardKey?.trim() ?? ''
+
+				if (!cardKey) {
+					return json({ error: 'cardKey is required' }, 400)
+				}
+
+				let mapPath = body.data.mapPath?.trim() || undefined
+
+				if (!mapPath) {
+					const slug = (body.data.set ?? 'default').replace(/[/\\]/g, '-')
+					const mapsDir = path.join(process.cwd(), 'var', 'maps')
+					await fs.mkdir(mapsDir, { recursive: true })
+					mapPath = path.join(mapsDir, `tcgplayer-id-map-${slug}.json`)
+				}
+
+				let map: Record<string, number> = {}
+
+				try {
+					map = JSON.parse(await fs.readFile(mapPath, 'utf8'))
+				} catch {
+					// File doesn't exist yet — start fresh.
+				}
+
+				const productId = body.data.productId
+
+				if (productId === null || productId === undefined) {
+					delete map[cardKey]
+				} else {
+					map[cardKey] = productId
+				}
+
+				await fs.writeFile(mapPath, `${JSON.stringify(map, null, '\t')}\n`, 'utf8')
+
+				return json({ mapPath, map })
 			}
 
 			// -----------------------------------------------------------------

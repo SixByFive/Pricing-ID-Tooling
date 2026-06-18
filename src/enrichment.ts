@@ -79,6 +79,20 @@ export interface RunOptions {
 	 * The set_id is extracted from the file and used as the TCGPlayer set ID.
 	 */
 	tcgplayerJson?: string
+
+	/**
+	 * Path to a JSON file mapping collector numbers to TCGPlayer product IDs.
+	 *
+	 * Used to manually resolve ambiguous or unmatched cards, or for sets where
+	 * TCGPlayer product IDs are known but no set file/CSV is available.
+	 *
+	 * Format: { "001": 223761, "002": 223760, ... }
+	 *
+	 * Keys are card file basenames (without .ts). The enrichment applies these
+	 * overrides after matching — ambiguous and unmatched cards whose number
+	 * appears in this map are converted to matched using the specified product ID.
+	 */
+	tcgplayerIdMap?: string
 }
 
 export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport> {
@@ -118,7 +132,7 @@ export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport>
 
 		if (opts.tcgplayerJson.toLowerCase().endsWith('.csv')) {
 			// TCGCSV format: CSV export from tcgcsv.com
-			localSetResponse = parseTcgcsv(raw)
+			localSetResponse = parseTcgcsv(raw, opts.tcgplayerSetId)
 		} else {
 			const parsed = JSON.parse(raw)
 			if (parsed && Array.isArray(parsed.products)) {
@@ -170,18 +184,36 @@ export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport>
 		log('')
 	}
 
+	// Load TCGPlayer ID overrides (collector number → product ID).
+	const tcgplayerIdOverrides = new Map<string, number>()
+	if (opts.tcgplayerIdMap) {
+		const overrideRaw = JSON.parse(await fs.readFile(opts.tcgplayerIdMap, 'utf8')) as Record<string, unknown>
+		for (const [num, id] of Object.entries(overrideRaw)) {
+			if (typeof id === 'number' && id > 0) {
+				tcgplayerIdOverrides.set(num.toLowerCase(), id)
+			}
+		}
+		log(`TCGPlayer ID overrides: ${path.resolve(opts.tcgplayerIdMap)} (${tcgplayerIdOverrides.size} entries)`)
+		log('')
+	}
+
 	// When no TCGPlayer set ID is available, fall back to CardMarket-only mode if we have
-	// CM context. Without a set ID we cannot fetch products, so only CM IDs are written.
+	// CM context or an ID override map. Without either, we have nothing to write.
 	const cardmarketOnlyMode = typeof tcgplayerSetId !== 'number'
 
 	if (cardmarketOnlyMode) {
-		if (!cardmarketContext) {
+		if (!cardmarketContext && tcgplayerIdOverrides.size === 0) {
 			throw new Error(
 				`Set file has no thirdParty.tcgplayer and no CardMarket context is available. ` +
-				`Provide a TCGPlayer set ID, a TCGPlayer JSON file, or a CardMarket export: ${setFilePath}`,
+				`Provide a TCGPlayer set ID, a TCGPlayer JSON file, a CardMarket export, or a TCGPlayer ID override map: ${setFilePath}`,
 			)
 		}
-		log('No TCGPlayer set ID — running in CardMarket-only mode (CardMarket IDs will be written, TCGPlayer IDs skipped)')
+		if (cardmarketContext) {
+			log('No TCGPlayer set ID — running in CardMarket-only mode (CardMarket IDs will be written, TCGPlayer IDs skipped)')
+		}
+		if (tcgplayerIdOverrides.size > 0) {
+			log('No TCGPlayer set ID — TCGPlayer IDs will come from the override map')
+		}
 		log('')
 	}
 
@@ -290,20 +322,100 @@ export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport>
 
 	const resultsWithReviewFlags = markCardmarketReviewRequired(resultsWithCardmarket)
 
-	const matched = resultsWithReviewFlags.filter((r): r is MatchedCard => {
+	// Apply TCGPlayer ID overrides: convert ambiguous/unmatched cards to matched
+	// when the caller supplied an explicit product ID for that card's number.
+	const resolvedResults: MatchResult[] = tcgplayerIdOverrides.size === 0
+		? resultsWithReviewFlags
+		: resultsWithReviewFlags.map((result) => {
+				if (result.status !== 'ambiguous' && result.status !== 'unmatched') {
+					return result
+				}
+
+				const filename = path.basename(result.cardFile, '.ts')
+				const overrideProductId = tcgplayerIdOverrides.get(filename.toLowerCase())
+
+				if (!overrideProductId) return result
+
+				// Prefer the actual loaded product (preserves SKU/variant data).
+				// Fall back to a synthetic product when the ID isn't in the product list.
+				const realProduct = products.find((p) => p.id === overrideProductId)
+
+				// When creating a synthetic product with no real metadata, derive a SKU
+				// hint from the CM review so the variant resolver picks the right type
+				// (e.g. holo/reverse) instead of defaulting to normal.
+				// This ensures the TCGPlayer ID lands on the same variant the CM mapping
+				// targets, and getCardmarketIdForVariantKey can match it correctly.
+				let skusHint: Record<string, TCGTrackingSkuEntry> | undefined
+				if (!realProduct && result.cardmarketReview) {
+					const mapped = result.cardmarketReview.products.filter((p) => p.mapping)
+					if (mapped.length === 1) {
+						const m = mapped[0].mapping!
+						const typeToVar: Record<string, string> = {
+							normal: 'Normal',
+							holo: 'Holofoil',
+							reverse: 'Reverse Holofoil',
+							metal: 'Metal',
+							lenticular: 'Lenticular',
+						}
+						// Build a text string the resolver understands via resolveFromText:
+						// prefix foil name (if any), then the type label.
+						const parts: string[] = []
+						if (m.foil) parts.push(m.foil)
+						const typeLabel = typeToVar[m.type ?? '']
+						if (typeLabel) parts.push(typeLabel)
+						if (parts.length > 0) {
+							skusHint = { '0': { var: parts.join(' ') } }
+						}
+					}
+				}
+
+				const product: TCGTrackingProduct = realProduct ?? {
+					id: overrideProductId,
+					name: filename,
+					clean_name: filename,
+					number: filename,
+					rarity: null,
+					cardmarket_id: null,
+					cardtrader_id: null,
+					cardtrader: [],
+					skus: skusHint,
+				}
+
+				return {
+					status: 'matched' as const,
+					cardFile: result.cardFile,
+					matchMethod: 'collector-number' as const,
+					reviewRequired: false,
+					products: [product],
+					cardmarketReview: result.cardmarketReview,
+				}
+			})
+
+	const overrideResolved = tcgplayerIdOverrides.size > 0
+		? resolvedResults.filter((r, i) => {
+				const orig = resultsWithReviewFlags[i]
+				return r.status === 'matched' && (orig.status === 'ambiguous' || orig.status === 'unmatched')
+			}).length
+		: 0
+
+	if (overrideResolved > 0) {
+		log(`Override resolved: ${overrideResolved}`)
+	}
+
+	const matched = resolvedResults.filter((r): r is MatchedCard => {
 		return r.status === 'matched'
 	})
 
-	const ambiguous = resultsWithReviewFlags.filter((r): r is AmbiguousCard => {
+	const ambiguous = resolvedResults.filter((r): r is AmbiguousCard => {
 		return r.status === 'ambiguous'
 	})
 
-	const unmatched = resultsWithReviewFlags.filter((r): r is UnmatchedCard => {
+	const unmatched = resolvedResults.filter((r): r is UnmatchedCard => {
 		return r.status === 'unmatched'
 	})
 
 	const reviewRequired = matched.filter((r) => r.reviewRequired)
-	const cardmarketSummary = summariseCardmarketReviews(resultsWithReviewFlags)
+	const cardmarketSummary = summariseCardmarketReviews(resolvedResults)
 
 	log(`Matched:         ${matched.length}`)
 	log(`Ambiguous:       ${ambiguous.length}`)
@@ -405,11 +517,6 @@ export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport>
 	for (const match of unmatchedWithCm) {
 		try {
 			const source = await fs.readFile(match.cardFile, 'utf8')
-
-			if (!hasVariants(source)) {
-				noVariantsCount++
-				continue
-			}
 
 			if (!opts.apply) {
 				continue
@@ -716,7 +823,7 @@ function readString(value: unknown): string | undefined {
 // TCGCSV format parser (tcgcsv.com CSV export)
 // ---------------------------------------------------------------------------
 
-function parseTcgcsv(csv: string): TCGTrackingSetResponse {
+function parseTcgcsv(csv: string, filterGroupId?: number): TCGTrackingSetResponse {
 	const rows = parseCsvRows(csv)
 
 	if (rows.length < 2) {
@@ -741,8 +848,11 @@ function parseTcgcsv(csv: string): TCGTrackingSetResponse {
 		)
 	}
 
-	const products: TCGTrackingProduct[] = []
-	let set_id = 0
+	// Collect products grouped by groupId so we can filter after the full parse.
+	// This lets a single "Miscellaneous" CSV serve multiple target groups without
+	// number collisions between unrelated cards (e.g. Futsal 2020 group 2374).
+	const byGroup = new Map<number, TCGTrackingProduct[]>()
+	let firstGroupId = 0
 
 	for (let i = 1; i < rows.length; i++) {
 		const row = rows[i]
@@ -750,10 +860,8 @@ function parseTcgcsv(csv: string): TCGTrackingSetResponse {
 		const productId = parseInt(row[colProductId] ?? '', 10)
 		if (!productId || isNaN(productId)) continue
 
-		if (!set_id && colGroupId >= 0) {
-			const gid = parseInt(row[colGroupId] ?? '', 10)
-			if (gid && !isNaN(gid)) set_id = gid
-		}
+		const gid = colGroupId >= 0 ? (parseInt(row[colGroupId] ?? '', 10) || 0) : 0
+		if (!firstGroupId && gid) firstGroupId = gid
 
 		// extNumber like "GG19/GG70" or "TG01/TG30" — strip the "/TOTAL" part
 		const extNumber = (row[colExtNumber] ?? '').trim()
@@ -765,7 +873,7 @@ function parseTcgcsv(csv: string): TCGTrackingSetResponse {
 			skus['0'] = { var: subTypeName }
 		}
 
-		products.push({
+		const product: TCGTrackingProduct = {
 			id: productId,
 			name: colName >= 0 ? (row[colName] ?? '').trim() : String(productId),
 			clean_name: colCleanName >= 0
@@ -777,10 +885,28 @@ function parseTcgcsv(csv: string): TCGTrackingSetResponse {
 			cardtrader_id: null,
 			cardtrader: [],
 			skus: Object.keys(skus).length > 0 ? skus : undefined,
-		})
+		}
+
+		const bucket = byGroup.get(gid) ?? []
+		bucket.push(product)
+		byGroup.set(gid, bucket)
 	}
 
-	return { set_id, set_name: '', set_abbr: '', products }
+	// If the caller specified a group ID and it exists in the file, return only
+	// those products. This avoids number collisions when the CSV bundles many
+	// unrelated sets (e.g. TCGPlayer's "Miscellaneous Cards and Products" group).
+	if (filterGroupId && byGroup.has(filterGroupId)) {
+		return {
+			set_id: filterGroupId,
+			set_name: '',
+			set_abbr: '',
+			products: byGroup.get(filterGroupId)!,
+		}
+	}
+
+	// Single-group file (or no filter) — return everything.
+	const allProducts = Array.from(byGroup.values()).flat()
+	return { set_id: firstGroupId, set_name: '', set_abbr: '', products: allProducts }
 }
 
 function parseCsvRows(csv: string): string[][] {
