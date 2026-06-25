@@ -10,6 +10,7 @@ import {
 	type CardmarketManualVariant,
 } from './cardmarket-merge'
 import { listSets, runEnrichment } from './enrichment'
+import { linkSetFromCatalog } from './cardmarket-catalog-linker'
 
 const PORT = Number(process.env.PORT ?? 3001)
 const PUBLIC_DIR = path.join(import.meta.dir, '..', 'public')
@@ -260,6 +261,42 @@ Bun.serve({
 					mappingPath: context.mappingPath,
 					mapping: nextMapping,
 				})
+			}
+
+			// -----------------------------------------------------------------
+			// API: link a set's CardMarket IDs from the official product catalog
+			// -----------------------------------------------------------------
+			// POST /api/cardmarket-catalog-link
+			// body: { repo: string, set: string }
+			// Read-only against the card-data repo; writes a merge JSON to
+			// var/cm-exports/. No network calls to CardMarket — uses the
+			// already-downloaded official product catalog (var/cardmarket/products_singles.json).
+
+			if (url.pathname === '/api/cardmarket-catalog-link' && req.method === 'POST') {
+				const body = await readJsonBody<{ repo?: string; set?: string }>(req)
+
+				if (!body.ok) {
+					return json({ error: body.error }, 400)
+				}
+
+				const repo = body.data.repo?.trim() ?? ''
+				const set = body.data.set?.trim() ?? ''
+
+				if (!repo || !set) {
+					return json({ error: 'repo and set are required' }, 400)
+				}
+
+				const setDir = path.join(repo, 'data', set)
+				const outDir = path.join(process.cwd(), 'var', 'cm-exports')
+
+				try {
+					const result = await linkSetFromCatalog({ setDir, outDir })
+
+					return json({ ok: true, ...result })
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error)
+					return json({ error: message }, 400)
+				}
 			}
 
 			// -----------------------------------------------------------------

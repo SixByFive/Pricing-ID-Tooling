@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cardmarket Set Merge Exporter (Any Set + Pagination + Reliable Export)
 // @namespace    sixbyfive-tools
-// @version      3.5.5
+// @version      3.5.8
 // @description  Collects Cardmarket productIds + variant names from Pokemon Singles set pages. Supports both the new grid layout (2025+) and legacy productRow layout. Merges across slugs by derived groupKey.
 // @match        https://www.cardmarket.com/*/Pokemon/Products/Singles/*
 // @match        https://www.cardmarket.com/*/Pokemon/Products/Singles/*/*
@@ -17,6 +17,16 @@
   const SET_OVERRIDES = {
     // "Prismatic-Evolutions-Additionals": { forceBucket: "additional", canonicalSetCodeOverride: "PRE" },
   };
+
+  // Sub-set collector-number prefixes that are known to never have a separate
+  // reverse-holo print (so a single "additional" listing for them would be
+  // spurious). Mostly Sword & Shield era gallery-style subsets. Add more here
+  // as needed — do NOT widen the regex this feeds instead, since that's what
+  // accidentally swallowed Classic Collection's BS/TR/MA/... sub-codes.
+  const NO_REVERSE_HOLO_SUBCODES = new Set([
+    "GG", // Galarian Gallery (Astral Radiance, Crown Zenith)
+    "TG", // Trainer Gallery (Brilliant Stars, Astral Radiance, Lost Origin, Silver Tempest, Crown Zenith)
+  ]);
 
   // ===========================================================================
   // Storage
@@ -481,19 +491,22 @@
   }
 
   function parseCardIdFromDisplay(displayText) {
-    const m = String(displayText).match(/\(([a-zA-Z0-9]+)\s+([a-zA-Z]{0,3}[0-9]{1,4}[a-zA-Z]?)\)/);
+    // Celebrations (and similar) Classic Collection reprints show a 3-token
+    // parenthetical referencing the original print's set, e.g. "(CEL BS 2)" for
+    // a Base Set reprint. The middle token (original set code) is optional.
+    const m = String(displayText).match(
+      /\(([a-zA-Z0-9]+)\s+(?:([a-zA-Z]{1,4})\s+)?([a-zA-Z]{0,3}[0-9]{1,4}[a-zA-Z]?)\)/
+    );
     if (!m) return null;
 
     const setCode = normalizeSetCode(m[1]);
-    const numRaw = String(m[2]).trim();
+    const subCode = m[2] ? m[2].toUpperCase() : "";
+    const numRaw = String(m[3]).trim();
 
     const n = numRaw.match(/^(\d+)([a-zA-Z]?)$/);
-    if (!n) return `${setCode}-${numRaw}`;
+    const numPart = n ? `${pad3(n[1])}${(n[2] || "").toUpperCase()}` : numRaw;
 
-    const padded = pad3(n[1]);
-    const suffix = (n[2] || "").toUpperCase();
-
-    return `${setCode}-${padded}${suffix}`;
+    return subCode ? `${setCode}-${subCode}${numPart}` : `${setCode}-${numPart}`;
   }
 
   function toCanonicalCardId(rawCardId) {
@@ -687,10 +700,16 @@
         return true;
       });
 
-      // Cards whose collector number starts with letters (GG, TG, …) never have a
-      // reverse-holo print, so "additional" is meaningless for them. Collapse everything
-      // into base so the Bulk Edit UI doesn't allocate an empty reverse-holo slot.
-      if (/^[A-Z0-9]+-[A-Z]+\d/.test(k)) {
+      // Gallery-style cards (GG69, TG11, …) never have a reverse-holo print, so
+      // "additional" is meaningless for them. Collapse everything into base so
+      // the Bulk Edit UI doesn't allocate an empty reverse-holo slot. Driven by
+      // NO_REVERSE_HOLO_SUBCODES — must NOT match Classic Collection sub-codes
+      // (CEL-BS004, CEL-TR008, …), which legitimately have a second distinct
+      // foil print sold as a separate Cardmarket listing.
+      const subCodeMatch = k.match(/^[A-Z0-9]+-([A-Z]+)\d/);
+      const subCode = subCodeMatch ? subCodeMatch[1] : null;
+
+      if (subCode && NO_REVERSE_HOLO_SUBCODES.has(subCode)) {
         e.ids.base = uniqSorted([...e.ids.base, ...e.ids.additional]);
         e.ids.additional = [];
         for (const p of e.cardmarketProducts) p.bucket = "base";
@@ -728,6 +747,7 @@
     setDebug({
       page,
       sampleRows: debugRows.slice(0, 10),
+      failedRows: debugRows.filter((r) => !r.rawCardId).slice(0, 20),
       totals: { mergedKeys: uniqueKeys, pagesCollected: store.pages.length, groupKey },
     });
 

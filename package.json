@@ -8,11 +8,14 @@
 		"enrich:dry-run": "bun src/cli.ts",
 		"enrich:apply": "bun src/cli.ts --apply",
 		"typecheck": "tsc --noEmit",
-		"validate": "bun run typecheck"
+		"validate": "bun run typecheck",
+		"cm-scrape": "tsx scripts/cardmarket-scrape.ts"
 	},
 	"devDependencies": {
 		"@types/bun": "^1.2.0",
 		"@types/node": "^20.0.0",
+		"playwright": "^1.61.1",
+		"tsx": "^4.22.4",
 		"typescript": "^5.0.0"
 	}
 }

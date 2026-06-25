@@ -99,6 +99,41 @@
     margin-bottom: 8px;
   }
 
+  .sidebar-collapsible {
+    flex-shrink: 0;
+  }
+
+  .sidebar-collapsible summary {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted2);
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .sidebar-collapsible summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .sidebar-collapsible summary::before {
+    content: '▸';
+    display: inline-block;
+    width: 12px;
+    color: var(--muted2);
+    transition: transform 0.15s;
+  }
+
+  .sidebar-collapsible[open] summary::before {
+    transform: rotate(90deg);
+  }
+
+  .sidebar-collapsible[open] summary {
+    margin-bottom: 8px;
+  }
+
   input[type="text"] {
     width: 100%;
     background: var(--surface2);
@@ -905,6 +940,104 @@
     margin: 8px 0;
   }
 
+  .catalog-link-queue {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+  }
+
+  .catalog-link-empty {
+    color: var(--muted2);
+    font-size: 12px;
+    padding: 6px 0;
+  }
+
+  .catalog-link-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+
+  .catalog-link-item-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .catalog-link-item-name {
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .catalog-link-status {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-family: var(--font-mono);
+    padding: 2px 7px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+
+  .catalog-link-status.pending { color: var(--muted2); }
+  .catalog-link-status.running { color: var(--accent-hover); border-color: var(--accent); }
+  .catalog-link-status.done { color: var(--success); border-color: rgba(34,197,94,.4); }
+  .catalog-link-status.error { color: var(--danger); border-color: rgba(239,68,68,.4); }
+
+  .catalog-link-item-detail {
+    color: var(--muted2);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
+  .catalog-link-item-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 2px;
+  }
+
+  .btn-catalog-link-use, .btn-catalog-link-remove {
+    background: var(--surface3);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 3px 8px;
+    font-size: 11px;
+    color: var(--muted);
+    cursor: pointer;
+    transition: border-color .15s, color .15s;
+  }
+
+  .btn-catalog-link-use:hover, .btn-catalog-link-remove:hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+
+  .catalog-link-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .catalog-link-actions .btn-browse,
+  .catalog-link-actions .btn-dry-run {
+    flex: 1;
+    justify-content: center;
+    font-size: 12px;
+    padding: 6px 8px;
+  }
+
   .id-map-hint {
     margin: 10px 0 6px;
     display: flex;
@@ -1118,6 +1251,19 @@
       </div>
     </div>
 
+    <details class="sidebar-section sidebar-collapsible">
+      <summary>CardMarket catalog linker <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted2)">(no scraping)</span></summary>
+      <div class="catalog-link-queue" id="catalog-link-queue">
+        <div class="catalog-link-empty">No sets queued.</div>
+      </div>
+      <div class="catalog-link-actions">
+        <button class="btn-browse" type="button" id="btn-add-current-set" title="Add the currently selected set to the queue">+ Add current set</button>
+        <button class="btn-browse" type="button" id="btn-import-sets-json" title="Import a sets.json (matches by set name against the loaded Sets list)">&#128193; Import sets.json</button>
+        <button class="btn-dry-run" type="button" id="btn-run-catalog-queue" disabled>▷ Run queue</button>
+      </div>
+      <input type="file" id="catalog-link-import-file" accept=".json" style="display:none">
+    </details>
+
     <div class="sidebar-section">
       <label>Sets</label>
       <div class="search-wrap">
@@ -1219,6 +1365,206 @@
   const cardmarketMapInput = bindFilePicker('cardmarket-map-input', 'cardmarket-map-file', 'cardmarket-map-clear', 'cardmarketMap')
   const tcgplayerJsonInput = bindFilePicker('tcgplayer-json-input', 'tcgplayer-json-file', 'tcgplayer-json-clear', 'tcgplayerJson')
   const tcgplayerIdMapInput = bindFilePicker('tcgplayer-id-map-input', 'tcgplayer-id-map-file', 'tcgplayer-id-map-clear', 'tcgplayerIdMap')
+
+  // ---------------------------------------------------------------------------
+  // CardMarket catalog linker queue
+  // ---------------------------------------------------------------------------
+
+  let catalogLinkQueue = []
+  try {
+    catalogLinkQueue = JSON.parse(localStorage.getItem('catalogLinkQueue') || '[]')
+  } catch {
+    catalogLinkQueue = []
+  }
+
+  const catalogQueueEl = document.getElementById('catalog-link-queue')
+  const btnAddCurrentSet = document.getElementById('btn-add-current-set')
+  const btnRunCatalogQueue = document.getElementById('btn-run-catalog-queue')
+
+  function saveCatalogLinkQueue() {
+    localStorage.setItem('catalogLinkQueue', JSON.stringify(catalogLinkQueue))
+  }
+
+  function renderCatalogLinkQueue() {
+    if (catalogLinkQueue.length === 0) {
+      catalogQueueEl.innerHTML = '<div class="catalog-link-empty">No sets queued.</div>'
+      btnRunCatalogQueue.disabled = true
+      return
+    }
+
+    btnRunCatalogQueue.disabled = catalogLinkQueue.some((item) => item.status === 'running')
+
+    catalogQueueEl.innerHTML = catalogLinkQueue.map((item, index) => {
+      const status = item.status || 'pending'
+      let detail = ''
+
+      if (status === 'done' && item.result) {
+        detail = `Matched ${item.result.matchedCount}/${item.result.totalCards} cards${item.result.unmatched?.length ? ` (${item.result.unmatched.length} unmatched)` : ''}`
+      } else if (status === 'error') {
+        detail = escapeHtml(item.error || 'Failed')
+      }
+
+      return `
+        <div class="catalog-link-item">
+          <div class="catalog-link-item-row">
+            <span class="catalog-link-item-name">${escapeHtml(item.set)}</span>
+            <span class="catalog-link-status ${status}">${status}</span>
+          </div>
+          ${detail ? `<div class="catalog-link-item-detail">${detail}</div>` : ''}
+          <div class="catalog-link-item-actions">
+            ${status === 'done' ? `<button class="btn-catalog-link-use" type="button" onclick="useCatalogLinkResult(${index})">Use this JSON</button>` : ''}
+            <button class="btn-catalog-link-remove" type="button" onclick="removeCatalogLinkItem(${index})">Remove</button>
+          </div>
+        </div>
+      `
+    }).join('')
+  }
+
+  function addCatalogLinkSet(set) {
+    if (catalogLinkQueue.some((item) => item.set === set)) return
+    catalogLinkQueue.push({ set, status: 'pending' })
+    saveCatalogLinkQueue()
+    renderCatalogLinkQueue()
+  }
+
+  function removeCatalogLinkItem(index) {
+    catalogLinkQueue.splice(index, 1)
+    saveCatalogLinkQueue()
+    renderCatalogLinkQueue()
+  }
+
+  function useCatalogLinkResult(index) {
+    const item = catalogLinkQueue[index]
+    if (!item || item.status !== 'done' || !item.result?.destPath) return
+    cardmarketJsonInput.value = item.result.destPath
+    localStorage.setItem('cardmarketJson', item.result.destPath)
+    document.getElementById('cardmarket-json-clear').hidden = false
+  }
+
+  async function runCatalogLinkQueue() {
+    const repo = repoInput.value.trim()
+    if (!repo) {
+      alert('Enter a repo path first.')
+      return
+    }
+
+    btnRunCatalogQueue.disabled = true
+
+    for (let i = 0; i < catalogLinkQueue.length; i++) {
+      const item = catalogLinkQueue[i]
+      if (item.status === 'done') continue
+
+      item.status = 'running'
+      delete item.error
+      saveCatalogLinkQueue()
+      renderCatalogLinkQueue()
+
+      try {
+        const res = await fetch('/api/cardmarket-catalog-link', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repo, set: item.set }),
+        })
+
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Request failed')
+
+        item.status = 'done'
+        item.result = data
+      } catch (err) {
+        item.status = 'error'
+        item.error = err instanceof Error ? err.message : String(err)
+      }
+
+      saveCatalogLinkQueue()
+      renderCatalogLinkQueue()
+    }
+
+    btnRunCatalogQueue.disabled = catalogLinkQueue.length === 0
+  }
+
+  btnAddCurrentSet.addEventListener('click', () => {
+    if (!selectedSet) {
+      alert('Select a set first.')
+      return
+    }
+    addCatalogLinkSet(selectedSet)
+  })
+
+  btnRunCatalogQueue.addEventListener('click', () => {
+    runCatalogLinkQueue()
+  })
+
+  function normaliseForSetMatch(value) {
+    return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  }
+
+  function findSetPathByName(name) {
+    const target = normaliseForSetMatch(name)
+    if (!target) return null
+
+    return allSets.find((setPath) => {
+      const lastSegment = setPath.split('/').at(-1)
+      return normaliseForSetMatch(lastSegment) === target
+    }) ?? null
+  }
+
+  const btnImportSetsJson = document.getElementById('btn-import-sets-json')
+  const catalogLinkImportFile = document.getElementById('catalog-link-import-file')
+
+  btnImportSetsJson.addEventListener('click', () => {
+    if (allSets.length === 0) {
+      alert('Load a repo and its sets first (use the Repo field above).')
+      return
+    }
+    catalogLinkImportFile.click()
+  })
+
+  catalogLinkImportFile.addEventListener('change', async function () {
+    const file = this.files[0]
+    if (!file) return
+
+    try {
+      const text = await file.text()
+      const parsed = JSON.parse(text)
+
+      if (!Array.isArray(parsed)) {
+        throw new Error('Expected a JSON array (either ["Set Name", ...] or [{ "name": "...", "urls": [...] }, ...]).')
+      }
+
+      const names = parsed.map((entry) => (typeof entry === 'string' ? entry : entry?.name)).filter(Boolean)
+
+      let added = 0
+      const unmatched = []
+
+      for (const name of names) {
+        const setPath = findSetPathByName(name)
+        if (!setPath) {
+          unmatched.push(name)
+          continue
+        }
+        if (!catalogLinkQueue.some((item) => item.set === setPath)) {
+          catalogLinkQueue.push({ set: setPath, status: 'pending' })
+          added++
+        }
+      }
+
+      saveCatalogLinkQueue()
+      renderCatalogLinkQueue()
+
+      let msg = `Added ${added} set(s) to the queue from ${file.name}.`
+      if (unmatched.length > 0) {
+        msg += `\n\nCould not match ${unmatched.length} name(s) against the loaded Sets list:\n${unmatched.join(', ')}`
+      }
+      alert(msg)
+    } catch (err) {
+      alert(`Failed to import ${file.name}: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      this.value = ''
+    }
+  })
+
+  renderCatalogLinkQueue()
 
   let repoTimer
 
