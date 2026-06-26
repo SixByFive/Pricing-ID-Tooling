@@ -146,16 +146,16 @@ export function computeVariantDiff(
 	options: BuildVariantsOptions = {},
 ): VariantChange[] {
 	const variantsRange = findPropRange(source, 'variants')
-
-	if (!variantsRange) {
-		return []
-	}
-
-	const propText = source.slice(variantsRange.start, variantsRange.end)
-	const isDetailed = /^variants\s*:\s*\[/.test(propText)
 	const hasCardmarketReview = Boolean(options.cardmarketReview)
 
-	const existing = isDetailed ? parseVariantsArray(propText) : []
+	let existing: ParsedVariant[] = []
+
+	if (variantsRange) {
+		const propText = source.slice(variantsRange.start, variantsRange.end)
+		const isDetailed = /^variants\s*:\s*\[/.test(propText)
+		existing = isDetailed ? parseVariantsArray(propText) : []
+	}
+
 	const entries = assembleVariantEntries(existing, products, options.cardmarketReview)
 
 	return entries.map((entry): VariantChange => {

@@ -460,7 +460,9 @@ export async function runEnrichment(opts: RunOptions): Promise<EnrichmentReport>
 		try {
 			const source = await fs.readFile(match.cardFile, 'utf8')
 
-			if (!hasVariants(source)) {
+			if (fillMode && !hasVariants(source)) {
+				// Fill mode only ever adds missing cardtrader IDs to an existing
+				// detailed variants array — it must never create one from scratch.
 				noVariantsCount++
 				matchedWithDiffs.push(match)
 				continue
